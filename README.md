@@ -1,78 +1,94 @@
 # Career Sweep Engine
 
-**Career Sweep Engine** is a customizable, zero-API-cost Python tool designed to automate job board sweeping, parsing, and scoring across multiple platforms (LinkedIn, Indeed, Glassdoor, ZipRecruiter).
+**Career Sweep Engine** is a free Python automation tool. It aggregates, de-duplicates, and scores job postings across multiple ATS platforms and job boards. It uses dynamic PDF resume parsing to score matches. Finally, it generates structured datasets and highly readable 4-card-per-page PDF reports.
 
-## Features
-- **Multi-Platform Scraping**: Built on the open-source `jobspy` library to search across major job boards without API keys.
-- **Configurable Profiles**: Define reusable YAML profiles to search for entirely different careers (e.g., Paralegal, Front End Developer, UX Writer) seamlessly.
-- **Automated Validations**: Uses `requests` to verify if job links are still active (including platform-specific dead pages like Ashby's soft 404s).
-- **Match Scoring**: Extracts text from your PDF resume via `PyMuPDF` and assigns a match percentage based on your defined "must-have" skills.
-- **Visual Reporting**: Generates a clean, readable 4-card-per-page PDF using `reportlab`. Cards are color-coded (Amber for jobs requiring extended responses, Slate for quick applies).
-- **Export Ready**: Save results as PDF, CSV, and JSON for further tracking in Notion, Excel, or Google Sheets.
+## Features and architecture
+- **Multi-platform scraping**: Uses `python-jobspy` to extract postings from LinkedIn, Indeed, Glassdoor, and ZipRecruiter without API keys.
+- **ATS discovery and classification**: Inspects URLs to classify direct ATS endpoints, such as Greenhouse, Ashby, Lever, or Workable, versus aggregator feeds.
+- **Dynamic scoring**: Dynamically extracts text from your PDF resume, computes a weighted overlap against the job description using `must_have_skills`, and identifies `missing_skills`.
+- **Heuristic tagging**: Uses regex pattern matching to flag postings requiring extended written responses, such as "cover letter" or "assessment," versus standard quick applies.
+- **Link validation**: Executes live HTTP `GET` requests to prune expired links and detect platform-specific soft 404 redirects, for example, Ashby returning a blank state.
+- **Reporting**: Generates an atomic, styled PDF directory with clickable links and playbooks, alongside prioritized `.csv` and `.json` data dumps.
+
+## Prerequisites
+- **Python 3.10+**
+- **Note for Python 3.13 users:** The `pymupdf` package may require source compilation if pre-built wheels are not available yet. Ensure you have the Microsoft C++ Build Tools installed and select the "Desktop development with C++." workload before you install dependencies.
 
 ## Installation
 
-Ensure you have Python 3.10+ installed. 
-
-> **Note for Python 3.13 Users:** Since Python 3.13 is very new, some packages like `pymupdf` do not yet have pre-compiled binaries. You must install the [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) ("Desktop development with C++" workload) to allow pip to compile them from source.
+Clone the repository and install dependencies:
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/pvega62/career-sweep-engine.git
 cd career-sweep-engine
 pip install -r requirements.txt
 ```
 
-## Quick Start
+Verify your installation:
+```bash
+python sweep.py --version
+```
 
-The easiest way to get started is by running the interactive setup wizard:
+## Command-line usage
 
+### 1. Interactive setup wizard
+Use the built-in questionary command-line tool to generate a YAML configuration profile:
 ```bash
 python sweep.py --setup
 ```
 
-The wizard will ask you questions about your target role, location, skills, and export preferences. It generates a custom profile in the `profiles/` directory.
-
-To run a sweep using your new profile:
+### 2. Execution pipeline
+Run the engine by passing a configuration profile. The engine executes a 5-stage pipeline:
+1. **Profile loading**: Parses YAML and validates constraints.
+2. **Discovery**: Executes scrapers across configured ATS platforms and aggregates postings.
+3. **Validation**: Prunes dead links and parses soft 404 redirects.
+4. **Scoring**: Parses the provided resume PDF, calculates keyword overlap, and generates custom application playbooks.
+5. **Generation**: Builds the date-stamped PDF, CSV, and JSON payloads.
 
 ```bash
-python sweep.py --profile profiles/<your_name>_profile.yaml
+python sweep.py --profile profiles/your_custom_profile.yaml
 ```
 
-## Creating Custom Profiles
+## Configuration schema
 
-You can manually create or duplicate profiles in the `profiles/` folder to quickly switch between different job searches. See `profiles/paralegal_nyc.yaml` or `profiles/frontend_developer.yaml` for examples.
-
-### Example Profile
+You define profiles in YAML format and store them in the `profiles/` directory.
 
 ```yaml
-name: "Alex"
+name: "Alex Rivera"
+
 search:
   titles:
     - "Paralegal"
     - "Legal Assistant"
   location: "New York, NY"
   remote_only: false
-  min_salary: 60000
+  min_salary: 65000
+
 resume:
-  path: "C:/path/to/alex_paralegal_resume.pdf"
+  path: "C:/absolute/path/to/resume.pdf"
   must_have_skills:
-    - "Contract Review"
-    - "Legal Research"
     - "Westlaw"
     - "LexisNexis"
-    - "Drafting"
+    - "Contract Review"
   keywords_weight: 1.5
+
+platforms:
+  greenhouse: true
+  ashby: true
+  lever: true
+  workable: true
+  aggregators: false
+
 export:
-  format: "pdf,csv"
+  format: "pdf,csv,json"
   output_dir: "results"
 ```
 
-## Architecture & Code
-
-- `sweep.py`: Main CLI entry point.
-- `engine/config.py`: Interactive CLI wizard (`questionary`) and YAML configuration loading.
-- `engine/discovery.py`: Scraper orchestration using `jobspy`.
-- `engine/validator.py`: URL liveness checking and soft-404 detection.
-- `engine/scorer.py`: Resume extraction (`fitz`) and match-percentage calculation.
-- `engine/pdf_builder.py`: Report generation using `reportlab`.
-- `engine/exporter.py`: CSV/JSON dumping using `pandas`.
+## Module reference
+- `sweep.py`: Primary orchestrator and `argparse` command-line entry point.
+- `engine/config.py`: Interactive command-line wizard and YAML parsing logic.
+- `engine/discovery.py`: Scraper orchestration, ATS detection, and DataFrame de-duplication.
+- `engine/validator.py`: URL uptime checking and HTTP soft 404 detection.
+- `engine/scorer.py`: Resume keyword extraction, percentage matching, and tagging.
+- `engine/pdf_builder.py`: PDF generation with customized `reportlab` layouts.
+- `engine/exporter.py`: DataFrame restructuring and CSV or JSON exporting.

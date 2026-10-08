@@ -40,17 +40,22 @@ def is_valid_url(url: str) -> bool:
         # If the request fails entirely (timeout, DNS error), assume the URL is dead
         return False
 
-def filter_valid_jobs(jobs: list) -> list:
+def filter_valid_jobs(jobs: list) -> tuple:
     """
-    Take a list of job dictionaries and return only those with valid URLs.
+    Take a list of job dictionaries and return only those with valid URLs, 
+    plus the count of expired jobs.
     """
     valid_jobs = []
+    expired_count = 0
     for job in jobs:
         url = job.get('url')
         if not url:
+            expired_count += 1
             continue
             
         if is_valid_url(url):
             valid_jobs.append(job)
+        else:
+            expired_count += 1
             
-    return valid_jobs
+    return valid_jobs, expired_count

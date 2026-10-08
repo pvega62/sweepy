@@ -1,48 +1,52 @@
 import os
-import csv
 import json
 import pandas as pd
+from typing import List, Dict, Tuple
 
-def export_to_csv(jobs: list, output_path: str):
-    """
-    Export the job list to a CSV file using pandas.
-    """
+EXPORT_COLUMNS = [
+    'match_score',
+    'badge',
+    'title',
+    'company',
+    'location',
+    'platform',
+    'min_amount',
+    'max_amount',
+    'currency',
+    'url',
+    'key_matches',
+    'missing_skills',
+    'playbook',
+    'description'
+]
+
+def export_to_csv(jobs: List[Dict], output_path: str) -> Tuple[int, int]:
     if not jobs:
-        print("No jobs to export to CSV.")
-        return
-        
+        return 0, 0
+
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
-    df = pd.DataFrame(jobs)
-    
-    # Reorder columns to put the most important ones first
-    cols = df.columns.tolist()
-    priority_cols = ['title', 'company', 'location', 'match_score', 'badge', 'url']
-    
-    final_cols = [c for c in priority_cols if c in cols]
-    final_cols += [c for c in cols if c not in priority_cols]
-    
-    df = df[final_cols]
-    
-    try:
-        df.to_csv(output_path, index=False, encoding='utf-8')
-        print(f"CSV successfully generated at: {output_path}")
-    except Exception as e:
-        print(f"Error exporting to CSV: {e}")
+    rows = []
+    for j in jobs:
+        row = dict(j)
+        if isinstance(row.get('key_matches'), list):
+            row['key_matches'] = ", ".join(row['key_matches'])
+        if isinstance(row.get('missing_skills'), list):
+            row['missing_skills'] = ", ".join(row['missing_skills'])
+        rows.append(row)
 
-def export_to_json(jobs: list, output_path: str):
-    """
-    Export the job list to a JSON file.
-    """
+    df = pd.DataFrame(rows)
+    for col in EXPORT_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+
+    df = df[EXPORT_COLUMNS]
+    df.to_csv(output_path, index=False, encoding='utf-8')
+    return len(df), len(df.columns)
+
+def export_to_json(jobs: List[Dict], output_path: str):
     if not jobs:
-        print("No jobs to export to JSON.")
         return
-        
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    try:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(jobs, f, indent=4, ensure_ascii=False)
-        print(f"JSON successfully generated at: {output_path}")
-    except Exception as e:
-        print(f"Error exporting to JSON: {e}")
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(jobs, f, indent=2, ensure_ascii=False)
