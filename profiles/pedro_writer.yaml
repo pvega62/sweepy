@@ -1,0 +1,22 @@
+name: "Pedro Vega"
+search:
+  titles:
+    - "Technical Writer"
+    - "UX Writer"
+    - "Content Designer"
+  location: "New York, NY"
+  remote_only: false
+  min_salary: 0
+resume:
+  path: "G:/My Drive/Resumes/Pedro V Resume.pdf"
+  must_have_skills:
+    - "Docs-as-code"
+    - "API Documentation"
+    - "Markdown"
+    - "UX Writing"
+    - "Figma"
+    - "Content Strategy"
+  keywords_weight: 1.5
+export:
+  format: "pdf,csv"
+  output_dir: "results"

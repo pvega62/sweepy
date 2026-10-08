@@ -1,0 +1,20 @@
+name: "Alex"
+search:
+  titles:
+    - "Paralegal"
+    - "Legal Assistant"
+  location: "New York, NY"
+  remote_only: false
+  min_salary: 60000
+resume:
+  path: "C:/path/to/alex_paralegal_resume.pdf"
+  must_have_skills:
+    - "Contract Review"
+    - "Legal Research"
+    - "Westlaw"
+    - "LexisNexis"
+    - "Drafting"
+  keywords_weight: 1.5
+export:
+  format: "pdf,csv"
+  output_dir: "results"

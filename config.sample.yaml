@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────
+# Career Sweep Engine — Sample Profile Configuration
+# ─────────────────────────────────────────────────
+
+# Your name (appears in the PDF report header)
+name: "Job Seeker"
+
+# ─── Job Search Settings ──────────────────────────
+search:
+  # List every job title you want to find.
+  titles:
+    - "Front End Developer"
+    - "React Engineer"
+
+  # Your target city and state.
+  location: "New York, NY"
+
+  # Set to true to ONLY see remote roles.
+  remote_only: false
+
+  # Minimum annual salary filter (optional, leave as 0 to skip).
+  min_salary: 0
+
+# ─── Resume Settings ─────────────────────────────
+resume:
+  # The full path to your resume PDF on your computer.
+  # Windows users: Use double backslashes (\\) or forward slashes (/)
+  path: "C:/path/to/your/resume.pdf"
+
+  # Must-have skills to prioritize for the match percentage.
+  must_have_skills:
+    - "React"
+    - "TypeScript"
+    - "JavaScript"
+    - "CSS"
+
+  keywords_weight: 1.5
+
+# ─── Export Settings ──────────────────────────────
+export:
+  # Comma-separated list of output formats. Options: pdf, csv, json
+  format: "pdf,csv"
+  output_dir: "results"

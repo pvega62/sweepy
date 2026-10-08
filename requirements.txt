@@ -1,0 +1,7 @@
+reportlab
+pymupdf
+requests
+pyyaml
+questionary
+python-jobspy
+pandas
