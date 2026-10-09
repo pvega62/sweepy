@@ -2,7 +2,7 @@
 
 **Sweepy** is a free Python automation tool. It aggregates, de-duplicates, and scores job postings across multiple ATS platforms and job boards. It uses dynamic PDF resume parsing to score matches. Finally, it generates structured datasets and highly readable 4-card-per-page PDF reports.
 
-TL;DR: It **sweeps** the internet for job postings and scores them against your resume.
+TL;DR: He's just a chill lil guy that **sweeps** the internet for job postings and scores them against your resume.
 
 ## Features and architecture
 - **Multi-platform scraping**: Uses `python-jobspy` to extract postings from LinkedIn, Indeed, Glassdoor, and ZipRecruiter without API keys.
