@@ -143,6 +143,8 @@ Once registered, your AI assistant can run commands such as:
 - *"Run a sweep with the writer profile and show the top 5 matches."*
 - *"Regenerate the PDF from the last pedro_writer sweep and save it to the Desktop."*
 
+For detailed LLM prompting patterns, tool sequencing, and workflows, consult [AGENTS.md](AGENTS.md).
+
 ## Module reference
 - `swee.py`: Primary orchestrator and `argparse` command-line entry point.
 - `server.py`: Model Context Protocol (`stdio`) server exposing tools for large language model (LLM) automation.
@@ -151,5 +153,3 @@ Once registered, your AI assistant can run commands such as:
 - `engine/validator.py`: URL uptime checking and HTTP soft 404 detection.
 - `engine/scorer.py`: Resume keyword extraction, percentage matching, and tagging.
 - `engine/pdf_builder.py`: PDF generation with customized `reportlab` layouts.
-- `engine/exporter.py`: DataFrame restructuring and CSV or JSON exporting.
-
