@@ -116,10 +116,10 @@ Sweepy provides a built-in MCP server (`server.py`) using `stdio` transport. Thi
 
 | Tool | Parameters | Description |
 | :--- | :--- | :--- |
-| `create_profile` | `name`, `titles`, `location`, `resume_path`, `remote_only`, `include_hybrid`, `min_salary`, `must_have_skills`, `platforms` | Generates a validated YAML search profile without running the terminal wizard. |
+| `create_profile` | `name`, `titles`, `location`, `resume_path`, `remote_only` *(default `false`)*, `include_hybrid` *(default `true`)*, `min_salary` *(default `0`)*, `must_have_skills`, `platforms`, `output_filename` | Generates a validated YAML search profile without running the terminal wizard. |
 | `run_sweep` | `profile_path` *(optional)* | Runs the 5-stage sweep pipeline, parses results, and outputs a structured summary. |
-| `get_results` | `profile_stem` *(optional)*, `limit` *(default 10)* | Retrieves the top matching roles, playbook recommendations, and artifact paths from the latest run. |
-| `export_report` | `json_source` or `profile_stem`, `formats` *(default `['pdf']`)*, `candidate_name`, `output_dir` | Regenerates a PDF, CSV, or JSON report from an existing sweep result without re-running discovery or scoring. |
+| `get_results` | `profile_stem` *(optional)*, `results_dir` *(default `'results'`)*, `limit` *(default `10`)* | Retrieves the top matching roles, playbook recommendations, and artifact paths from the most recent run. |
+| `export_report` | `json_source` *(optional)*, `profile_stem` *(optional)*, `results_dir` *(default `'results'`)*, `formats` *(default `['pdf']`)*, `candidate_name` *(default `'Job Seeker'`)*, `output_dir` *(optional)* | Regenerates a PDF, CSV, or JSON report from an existing sweep result without re-running discovery or scoring. |
 
 ### Connecting to Antigravity or Claude Desktop
 
@@ -131,7 +131,7 @@ Add Sweepy to your local client's MCP configuration file (for example, `mcp_conf
     "sweepy": {
       "command": "python",
       "args": [
-        "c:/Users/vegap/OneDrive/Documents/GitHub/sweepy/server.py"
+        "/path/to/sweepy/server.py"
       ]
     }
   }
