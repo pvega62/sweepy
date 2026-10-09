@@ -5,3 +5,4 @@ pyyaml
 questionary
 python-jobspy
 pandas
+mcp>=1.0.0

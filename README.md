@@ -1,6 +1,8 @@
-# Career Sweep Engine
+# Sweepy
 
-**Career Sweep Engine** is a free Python automation tool. It aggregates, de-duplicates, and scores job postings across multiple ATS platforms and job boards. It uses dynamic PDF resume parsing to score matches. Finally, it generates structured datasets and highly readable 4-card-per-page PDF reports.
+**Sweepy** is a free Python automation tool. It aggregates, de-duplicates, and scores job postings across multiple ATS platforms and job boards. It uses dynamic PDF resume parsing to score matches. Finally, it generates structured datasets and highly readable 4-card-per-page PDF reports.
+
+TL;DR: It **sweeps** the internet for job postings and scores them against your resume.
 
 ## Features and architecture
 - **Multi-platform scraping**: Uses `python-jobspy` to extract postings from LinkedIn, Indeed, Glassdoor, and ZipRecruiter without API keys.
@@ -19,14 +21,14 @@
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/pvega62/career-sweep-engine.git
-cd career-sweep-engine
+git clone https://github.com/pvega62/sweepy.git
+cd sweepy
 pip install -r requirements.txt
 ```
 
 Verify your installation:
 ```bash
-python sweep.py --version
+python swee.py --version
 ```
 
 ## Command-line usage
@@ -34,11 +36,11 @@ python sweep.py --version
 ### 1. Interactive setup wizard
 Use the built-in questionary command-line tool to generate a YAML configuration profile:
 ```bash
-python sweep.py --setup
+python swee.py --setup
 ```
 
 ### 2. Execution pipeline
-Run the engine by passing a configuration profile. The engine executes a 5-stage pipeline:
+Run Sweepy by passing a configuration profile. The engine executes a 5-stage pipeline:
 1. **Profile loading**: Parses YAML and validates constraints.
 2. **Discovery**: Executes scrapers across configured ATS platforms and aggregates postings.
 3. **Validation**: Prunes dead links and parses soft 404 redirects.
@@ -46,7 +48,7 @@ Run the engine by passing a configuration profile. The engine executes a 5-stage
 5. **Generation**: Builds the date-stamped PDF, CSV, and JSON payloads.
 
 ```bash
-python sweep.py --profile profiles/your_custom_profile.yaml
+python swee.py --profile profiles/your_custom_profile.yaml
 ```
 
 ## Configuration schema
@@ -106,11 +108,46 @@ You can register custom ATS domains under `platforms.custom` to classify posting
 | **Auth-walled portals** | Handshake, corporate intranets | **Unsupported** | Require session cookies or SSO credentials. |
 | **Anti-bot aggregators** | Boards with Cloudflare Turnstile or PerimeterX | **Rate-limited** | Automated HTTP requests may trigger HTTP 403 blocks without proxy rotation. |
 
+## Model Context Protocol (MCP) integration
+
+Sweepy provides a built-in MCP server (`server.py`) using `stdio` transport. This integration enables AI assistants, such as Antigravity and Claude Desktop, to configure search profiles, run sweeps, and analyze candidate matches directly through conversational prompts.
+
+### Available MCP tools
+
+| Tool | Parameters | Description |
+| :--- | :--- | :--- |
+| `create_profile` | `name`, `titles`, `location`, `resume_path`, `remote_only`, `include_hybrid`, `min_salary`, `must_have_skills`, `platforms` | Generates a validated YAML search profile without running the terminal wizard. |
+| `run_sweep` | `profile_path` *(optional)* | Runs the 5-stage sweep pipeline, parses results, and outputs a structured summary. |
+| `get_results` | `profile_stem` *(optional)*, `limit` *(default 10)* | Retrieves the top matching roles, playbook recommendations, and artifact paths from the latest run. |
+
+### Connecting to Antigravity or Claude Desktop
+
+Add Sweepy to your local client's MCP configuration file (for example, `mcp_config.json` or `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "sweepy": {
+      "command": "python",
+      "args": [
+        "c:/Users/vegap/OneDrive/Documents/GitHub/career-sweep-engine/server.py"
+      ]
+    }
+  }
+}
+```
+
+Once registered, your AI assistant can run commands such as:
+- *"Create a Sweepy profile for Alex searching for remote Technical Writer roles in New York with my resume at `path/to/resume.pdf`."*
+- *"Run a sweep with my writer profile and show me the top 5 matches."*
+
 ## Module reference
-- `sweep.py`: Primary orchestrator and `argparse` command-line entry point.
+- `swee.py`: Primary orchestrator and `argparse` command-line entry point.
+- `server.py`: Model Context Protocol (`stdio`) server exposing tools for LLM automation.
 - `engine/config.py`: Interactive command-line wizard and YAML parsing logic.
 - `engine/discovery.py`: Scraper orchestration, ATS detection, custom platform matching, and DataFrame de-duplication.
 - `engine/validator.py`: URL uptime checking and HTTP soft 404 detection.
 - `engine/scorer.py`: Resume keyword extraction, percentage matching, and tagging.
 - `engine/pdf_builder.py`: PDF generation with customized `reportlab` layouts.
 - `engine/exporter.py`: DataFrame restructuring and CSV or JSON exporting.
+

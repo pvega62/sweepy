@@ -88,7 +88,7 @@ def build_pdf(jobs: list, output_path: str, profile_name: str) -> int:
     
     # Header Banner
     title_style = ParagraphStyle('MainTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=13, alignment=1, spaceAfter=2)
-    story.append(Paragraph(f"Career Sweep Directory — {profile_name}", title_style))
+    story.append(Paragraph(f"Sweepy Directory — {profile_name}", title_style))
     story.append(Paragraph("Roles sorted by match score. Color badges indicate quick apply (Slate) vs custom responses (Amber).", ParagraphStyle('Sub', alignment=1, fontSize=8, textColor=colors.HexColor("#6B7280"), spaceAfter=6)))
 
     cards_on_page = 0

@@ -6,7 +6,7 @@ from pathlib import Path
 
 def run_wizard():
     print("╔══════════════════════════════════════════════════╗")
-    print("║     Career Sweep Engine — Profile Setup Wizard   ║")
+    print("║            Sweepy — Profile Setup Wizard         ║")
     print("╚══════════════════════════════════════════════════╝\n")
 
     name = questionary.text("What is your name?").ask()
@@ -103,7 +103,19 @@ def run_wizard():
     safe_name = re.sub(r'[^a-zA-Z0-9]+', '_', (name or "user")).strip('_').lower()
     file_path = f"profiles/{safe_name}_{first_title_slug}.yaml"
     
-    os.makedirs("profiles", exist_ok=True)
+    return save_profile(profile_data, file_path)
+
+def save_profile(profile_data: dict, file_path: str = None) -> str:
+    """Saves a profile configuration dict to YAML."""
+    if not file_path:
+        name = profile_data.get("name", "user")
+        titles = profile_data.get("search", {}).get("titles", ["custom"])
+        first_title = titles[0] if titles else "custom"
+        safe_name = re.sub(r'[^a-zA-Z0-9]+', '_', name).strip('_').lower()
+        safe_title = re.sub(r'[^a-zA-Z0-9]+', '_', first_title).strip('_').lower()
+        file_path = f"profiles/{safe_name}_{safe_title}.yaml"
+
+    os.makedirs(os.path.dirname(file_path) or "profiles", exist_ok=True)
     with open(file_path, "w", encoding="utf-8") as f:
         yaml.dump(profile_data, f, sort_keys=False, default_flow_style=False)
     

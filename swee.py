@@ -1,6 +1,7 @@
 import argparse
 import sys
 import os
+import re
 import datetime
 import importlib.metadata
 
@@ -11,7 +12,15 @@ from engine.scorer import score_jobs
 from engine.pdf_builder import build_pdf
 from engine.exporter import export_to_csv, export_to_json
 
-VERSION = "1.0.0"
+def _read_version() -> str:
+    version_file = os.path.join(os.path.dirname(__file__), "VERSION")
+    try:
+        with open(version_file) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return "unknown"
+
+VERSION = _read_version()
 
 def get_dependency_versions():
     import pymupdf
@@ -19,7 +28,7 @@ def get_dependency_versions():
     return f"Python {sys.version.split()[0]} | pymupdf {pymupdf.__version__} | reportlab {reportlab.__version__}"
 
 def main():
-    parser = argparse.ArgumentParser(description="Career Sweep Engine - Automated Job Board Aggregator")
+    parser = argparse.ArgumentParser(description="Sweepy - Automated Job Board Aggregator")
     parser.add_argument("--version", action="store_true", help="Show engine version and dependencies")
     parser.add_argument("--setup", action="store_true", help="Run the interactive configuration wizard")
     parser.add_argument("--profile", type=str, help="Path to the YAML profile configuration to use")
@@ -27,40 +36,43 @@ def main():
     args = parser.parse_args()
 
     if args.version:
-        print(f"Career Sweep Engine v{VERSION}")
+        print(f"Sweepy v{VERSION}")
         print(get_dependency_versions())
         print("Ready to sweep.")
         sys.exit(0)
 
     print("================================================================================")
-    print(f"Career Sweep Engine v{VERSION}")
+    print(f"Sweepy v{VERSION}")
 
     if args.setup:
         print("================================================================================\n")
         profile_path = run_wizard()
-        print(f"To run your sweep, execute: python sweep.py --profile {profile_path}")
+        print(f"To run your sweep, execute: python swee.py --profile {profile_path}")
         sys.exit(0)
 
-    # Determine profile path
-    profile_path = args.profile
-    if not profile_path:
-        if os.path.exists("profiles/custom_profile.yaml"):
-            profile_path = "profiles/custom_profile.yaml"
-        elif os.path.exists("profiles/paralegal_nyc.yaml"):
-            profile_path = "profiles/paralegal_nyc.yaml"
-        elif os.path.exists("config.sample.yaml"):
-            profile_path = "config.sample.yaml"
-            print("Notice: No profile specified. Using config.sample.yaml by default.")
-        else:
-            print("Error: No profile provided and default configuration not found.")
-            print("Please run: python sweep.py --setup")
-            sys.exit(1)
-
-    try:
+def run_sweep_pipeline(profile_path: str = None, profile_dict: dict = None) -> dict:
+    """
+    Executes the Sweepy 5-stage pipeline.
+    Accepts either a path to a profile YAML or a pre-loaded/in-memory configuration dictionary.
+    Returns a dictionary summarizing the sweep results, output paths, and top roles.
+    """
+    if profile_dict is not None:
+        config = profile_dict
+        profile_stem = re.sub(r'[^a-zA-Z0-9]+', '_', config.get("name", "profile")).strip('_').lower()
+    else:
+        if not profile_path:
+            if os.path.exists("profiles/custom_profile.yaml"):
+                profile_path = "profiles/custom_profile.yaml"
+            elif os.path.exists("profiles/paralegal_nyc.yaml"):
+                profile_path = "profiles/paralegal_nyc.yaml"
+            elif os.path.exists("config.sample.yaml"):
+                profile_path = "config.sample.yaml"
+                print("Notice: No profile specified. Using config.sample.yaml by default.")
+            else:
+                raise FileNotFoundError("No profile provided and default configuration not found.")
+        
         config = load_config(profile_path)
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+        profile_stem = os.path.splitext(os.path.basename(profile_path))[0]
 
     name = config.get("name", "Job Seeker")
     search = config.get("search", {})
@@ -101,7 +113,10 @@ def main():
 
     # [1/5] Loading profile
     print("[1/5] Loading profile...")
-    print(f"  * Profile loaded: {profile_path}")
+    if profile_path:
+        print(f"  * Profile loaded: {profile_path}")
+    else:
+        print("  * Profile loaded from in-memory configuration")
     print(f"  * Search titles: {titles_display}")
     print(f"  * Location: {location_display}")
 
@@ -115,7 +130,13 @@ def main():
 
     if not jobs:
         print("No jobs found matching your criteria. Try expanding your search.")
-        sys.exit(0)
+        return {
+            "status": "completed",
+            "discovered_count": 0,
+            "active_count": 0,
+            "roles": [],
+            "reports": {}
+        }
 
     # [3/5] Validating URLs
     print("\n[3/5] Validating URLs...")
@@ -126,8 +147,14 @@ def main():
     print(f"  * {len(valid_jobs)} verified active postings remain")
 
     if not valid_jobs:
-        print("All discovered jobs had invalid or dead links. Exiting.")
-        sys.exit(0)
+        print("All discovered jobs had invalid or dead links.")
+        return {
+            "status": "completed",
+            "discovered_count": len(jobs),
+            "active_count": 0,
+            "roles": [],
+            "reports": {}
+        }
 
     # [4/5] Scoring against resume
     print("\n[4/5] Scoring against resume...")
@@ -145,7 +172,6 @@ def main():
     # [5/5] Generating reports
     print("\n[5/5] Generating reports...")
     today_str = datetime.date.today().isoformat()
-    profile_stem = os.path.splitext(os.path.basename(profile_path))[0]
     base_output_path = os.path.join(output_dir, f"{profile_stem}_{today_str}")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -153,19 +179,23 @@ def main():
     csv_file = f"{base_output_path}.csv"
     json_file = f"{base_output_path}.json"
 
+    generated_reports = {}
     if "pdf" in formats:
         total_pages = build_pdf(scored_jobs, pdf_file, name)
         print(f"  -> Building PDF: {total_pages} pages (4 cards per page, {len(scored_jobs)} roles)")
         print(f"  * PDF saved: {pdf_file}")
+        generated_reports["pdf"] = os.path.abspath(pdf_file)
 
     if "csv" in formats:
         num_rows, num_cols = export_to_csv(scored_jobs, csv_file)
         print(f"  -> Building CSV: {num_rows} rows, {num_cols} columns")
         print(f"  * CSV saved: {csv_file}")
+        generated_reports["csv"] = os.path.abspath(csv_file)
 
     if "json" in formats:
         export_to_json(scored_jobs, json_file)
         print(f"  * JSON saved: {json_file}")
+        generated_reports["json"] = os.path.abspath(json_file)
 
     # Completion Banner
     top_role = scored_jobs[0] if scored_jobs else {}
@@ -179,6 +209,51 @@ def main():
     print(f"  Top match: {top_title} at {top_company} ({top_score}%)")
     print(f"  Reports saved to: {output_dir}\\")
     print("================================================================================")
+
+    return {
+        "status": "completed",
+        "discovered_count": len(jobs),
+        "active_count": len(scored_jobs),
+        "top_match": {
+            "title": top_title,
+            "company": top_company,
+            "match_score": top_score,
+            "url": top_role.get("url", "")
+        } if scored_jobs else None,
+        "roles": scored_jobs,
+        "reports": generated_reports
+    }
+
+def main():
+    parser = argparse.ArgumentParser(description="Sweepy - Automated Job Board Aggregator")
+    parser.add_argument("--version", action="store_true", help="Show engine version and dependencies")
+    parser.add_argument("--setup", action="store_true", help="Run the interactive configuration wizard")
+    parser.add_argument("--profile", type=str, help="Path to the YAML profile configuration to use")
+    
+    args = parser.parse_args()
+
+    if args.version:
+        print(f"Sweepy v{VERSION}")
+        print(get_dependency_versions())
+        print("Ready to sweep.")
+        sys.exit(0)
+
+    print("================================================================================")
+    print(f"Sweepy v{VERSION}")
+
+    if args.setup:
+        print("================================================================================\n")
+        profile_path = run_wizard()
+        print(f"To run your sweep, execute: python swee.py --profile {profile_path}")
+        sys.exit(0)
+
+    try:
+        run_sweep_pipeline(profile_path=args.profile)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        if not args.profile:
+            print("Please run: python swee.py --setup")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

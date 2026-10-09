@@ -1,4 +1,5 @@
 name: "Alex Rivera"
+
 search:
   titles:
     - "Paralegal"
@@ -7,7 +8,9 @@ search:
     - "Legal Secretary"
   location: "New York, NY"
   remote_only: false
+  include_hybrid: true   # Set to false to exclude hybrid positions
   min_salary: 65000
+
 resume:
   path: "C:/path/to/alex_paralegal_resume.pdf"
   must_have_skills:
@@ -18,13 +21,21 @@ resume:
     - "Legal Research"
     - "Litigation Support"
   keywords_weight: 1.5
+
 platforms:
   greenhouse: true
   ashby: true
   lever: true
   workable: true
   aggregators: false
+  custom:
+    - name: "SmartRecruiters"
+      domain: "smartrecruiters.com"
+      enabled: true
+    - name: "Breezy HR"
+      domain: "breezy.hr"
+      enabled: true
+
 export:
   format: "pdf,csv"
   output_dir: "results"
-

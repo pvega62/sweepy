@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────
-# Career Sweep Engine — Sample Profile Configuration
+# Sweepy — Sample Profile Configuration
 # ─────────────────────────────────────────────────
 
 # Your name (appears in the PDF report header)
@@ -18,6 +18,9 @@ search:
   # Set to true to ONLY see remote roles.
   remote_only: false
 
+  # Set to false to exclude hybrid positions.
+  include_hybrid: true
+
   # Minimum annual salary filter (optional, leave as 0 to skip).
   min_salary: 0
 
@@ -35,6 +38,25 @@ resume:
     - "CSS"
 
   keywords_weight: 1.5
+
+# ─── Platform Settings ────────────────────────────
+# Set each platform to true or false to enable or disable it.
+platforms:
+  greenhouse: true
+  ashby: true
+  lever: true
+  workable: true
+  aggregators: false   # Free feeds like Remotive, Adzuna
+
+  # Optional: add custom ATS endpoints or company career domains.
+  custom:
+    - name: "SmartRecruiters"
+      domain: "smartrecruiters.com"
+      enabled: true
+    # Add more entries below as needed:
+    # - name: "My Company"
+    #   domain: "careers.mycompany.com"
+    #   enabled: true
 
 # ─── Export Settings ──────────────────────────────
 export:
