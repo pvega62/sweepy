@@ -3,9 +3,17 @@ import pandas as pd
 from urllib.parse import urlparse
 from typing import List, Dict, Tuple
 
-def classify_platform(url: str, default_site: str) -> str:
-    """Classify the target ATS or board platform based on URL and site name."""
+def classify_platform(url: str, default_site: str, custom_platforms: List[Dict] = None) -> str:
+    """Classify the target ATS or board platform based on URL and site name, including custom platforms."""
     url_lower = url.lower()
+    
+    # Check custom user-defined platforms first
+    if custom_platforms:
+        for custom in custom_platforms:
+            c_domain = str(custom.get("domain", "")).lower().strip()
+            if c_domain and c_domain in url_lower:
+                return str(custom.get("name", "Custom"))
+
     if "greenhouse.io" in url_lower:
         return "Greenhouse"
     if "ashbyhq.com" in url_lower:
@@ -22,16 +30,19 @@ def discover_jobs(
     titles: List[str], 
     location: str, 
     remote_only: bool = False, 
+    include_hybrid: bool = True,
     min_salary: int = 0,
-    platforms: Dict[str, bool] = None,
+    platforms: Dict = None,
     results_wanted: int = 25
 ) -> Tuple[List[Dict], Dict[str, int]]:
     """
     Scrapes jobs across configured platforms and job boards via jobspy,
-    classifying ATS endpoints and aggregating statistics.
+    classifying ATS endpoints, handling custom platforms, and filtering hybrid/remote/salary.
     """
     if platforms is None:
         platforms = {"greenhouse": True, "ashby": True, "lever": True, "workable": True, "aggregators": False}
+
+    custom_platforms = platforms.get("custom", [])
 
     all_jobs = []
     platform_counts = {
@@ -42,6 +53,11 @@ def discover_jobs(
     }
     if platforms.get("aggregators", False):
         platform_counts["Aggregators"] = 0
+
+    for cp in custom_platforms:
+        cp_name = cp.get("name", "Custom")
+        if cp.get("enabled", True):
+            platform_counts[cp_name] = 0
 
     sites_to_query = ["linkedin", "indeed", "glassdoor", "zip_recruiter"]
 
@@ -66,11 +82,32 @@ def discover_jobs(
                         continue
 
                     raw_site = str(row.get("site", "Aggregator"))
-                    detected_platform = classify_platform(raw_url, raw_site)
+                    detected_platform = classify_platform(raw_url, raw_site, custom_platforms)
 
                     # Filter out if platform is explicitly disabled in config
                     plat_key = detected_platform.lower()
                     if plat_key in platforms and not platforms[plat_key]:
+                        continue
+                    
+                    # Check custom platform disabled status
+                    custom_disabled = False
+                    for cp in custom_platforms:
+                        if cp.get("name", "").lower() == plat_key and not cp.get("enabled", True):
+                            custom_disabled = True
+                            break
+                    if custom_disabled:
+                        continue
+
+                    job_title = str(row.get("title", ""))
+                    job_desc = str(row.get("description", ""))
+                    job_loc = str(row.get("location", location))
+                    
+                    # Hybrid filtering check
+                    is_hybrid_role = any(
+                        "hybrid" in text.lower() 
+                        for text in [job_title, job_loc, job_desc[:250]]
+                    )
+                    if not include_hybrid and is_hybrid_role:
                         continue
 
                     min_amt = row.get("min_amount") or 0

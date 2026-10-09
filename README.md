@@ -53,7 +53,7 @@ python sweep.py --profile profiles/your_custom_profile.yaml
 
 You define profiles in YAML format and store them in the `profiles/` directory.
 
-```yaml
+```yaml title="profiles/paralegal_nyc.yaml"
 name: "Alex Rivera"
 
 search:
@@ -62,6 +62,7 @@ search:
     - "Legal Assistant"
   location: "New York, NY"
   remote_only: false
+  include_hybrid: true   # Set to false to exclude hybrid positions
   min_salary: 65000
 
 resume:
@@ -78,16 +79,37 @@ platforms:
   lever: true
   workable: true
   aggregators: false
+  # Custom platforms or ATS domains:
+  custom:
+    - name: "SmartRecruiters"
+      domain: "smartrecruiters.com"
+      enabled: true
+    - name: "Breezy HR"
+      domain: "breezy.hr"
+      enabled: true
 
 export:
   format: "pdf,csv,json"
   output_dir: "results"
 ```
 
+## Custom platforms and caveats
+
+You can register custom ATS domains under `platforms.custom` to classify postings directly into your report directory.
+
+### Platform compatibility
+
+| Platform type | Examples | Compatibility | Caveats |
+| :--- | :--- | :--- | :--- |
+| **Public ATS** | Greenhouse, Ashby, Lever, Workable, SmartRecruiters, Breezy HR | **Fully supported** | Standard server-rendered job pages parse and validate cleanly. |
+| **Client-rendered SPAs** | Workday (`myworkdayjobs.com`), Oracle HCM | **Limited** | Platforms require dynamic JavaScript. Without a browser grid, initial HTML payloads may lack descriptions. |
+| **Auth-walled portals** | Handshake, corporate intranets | **Unsupported** | Require session cookies or SSO credentials. |
+| **Anti-bot aggregators** | Boards with Cloudflare Turnstile or PerimeterX | **Rate-limited** | Automated HTTP requests may trigger HTTP 403 blocks without proxy rotation. |
+
 ## Module reference
 - `sweep.py`: Primary orchestrator and `argparse` command-line entry point.
 - `engine/config.py`: Interactive command-line wizard and YAML parsing logic.
-- `engine/discovery.py`: Scraper orchestration, ATS detection, and DataFrame de-duplication.
+- `engine/discovery.py`: Scraper orchestration, ATS detection, custom platform matching, and DataFrame de-duplication.
 - `engine/validator.py`: URL uptime checking and HTTP soft 404 detection.
 - `engine/scorer.py`: Resume keyword extraction, percentage matching, and tagging.
 - `engine/pdf_builder.py`: PDF generation with customized `reportlab` layouts.

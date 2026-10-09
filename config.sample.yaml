@@ -12,6 +12,7 @@ search:
     - "Legal Secretary"
   location: "New York, NY"
   remote_only: false
+  include_hybrid: true   # Set to false to exclude hybrid positions
   min_salary: 65000
 
 resume:
@@ -29,6 +30,14 @@ platforms:
   lever: true
   workable: true
   aggregators: false
+  # Add custom platforms or ATS domains:
+  custom:
+    - name: "SmartRecruiters"
+      domain: "smartrecruiters.com"
+      enabled: true
+    - name: "Breezy HR"
+      domain: "breezy.hr"
+      enabled: true
 
 export:
   format: "pdf,csv"

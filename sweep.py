@@ -67,6 +67,7 @@ def main():
     titles = search.get("titles", [])
     location = search.get("location", "")
     remote_only = search.get("remote_only", False)
+    include_hybrid = search.get("include_hybrid", True)
     min_salary = search.get("min_salary", 0)
 
     resume = config.get("resume", {})
@@ -87,7 +88,14 @@ def main():
     output_dir = export.get("output_dir", "results")
 
     titles_display = ", ".join(titles) if titles else "All Titles"
-    location_display = f"{location} (including remote)" if not remote_only else f"{location} (remote only)"
+    location_suffix = []
+    if remote_only:
+        location_suffix.append("remote only")
+    else:
+        location_suffix.append("including remote")
+    if not include_hybrid:
+        location_suffix.append("no hybrid")
+    location_display = f"{location} ({', '.join(location_suffix)})"
     print(f"Profile: {name} — {titles_display} ({location})")
     print("================================================================================\n")
 
@@ -99,7 +107,7 @@ def main():
 
     # [2/5] Discovering roles
     print("\n[2/5] Discovering roles...")
-    jobs, platform_counts = discover_jobs(titles, location, remote_only, min_salary, platforms)
+    jobs, platform_counts = discover_jobs(titles, location, remote_only, include_hybrid, min_salary, platforms)
     for plat_name, count in platform_counts.items():
         dots = "." * max(3, 25 - len(plat_name))
         print(f"  -> Searching {plat_name}{dots} Found {count} postings")

@@ -1,20 +1,30 @@
-name: "Alex"
+name: "Alex Rivera"
 search:
   titles:
     - "Paralegal"
     - "Legal Assistant"
+    - "Litigation Support Specialist"
+    - "Legal Secretary"
   location: "New York, NY"
   remote_only: false
-  min_salary: 60000
+  min_salary: 65000
 resume:
   path: "C:/path/to/alex_paralegal_resume.pdf"
   must_have_skills:
-    - "Contract Review"
-    - "Legal Research"
     - "Westlaw"
     - "LexisNexis"
-    - "Drafting"
+    - "e-discovery"
+    - "Contract Review"
+    - "Legal Research"
+    - "Litigation Support"
   keywords_weight: 1.5
+platforms:
+  greenhouse: true
+  ashby: true
+  lever: true
+  workable: true
+  aggregators: false
 export:
   format: "pdf,csv"
   output_dir: "results"
+

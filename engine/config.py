@@ -19,6 +19,7 @@ def run_wizard():
     location = questionary.text("Where do you want to work? (City, State):").ask()
     
     include_remote = questionary.confirm("Do you want to include remote roles?").ask()
+    include_hybrid = questionary.confirm("Do you want to include hybrid roles?").ask()
     
     resume_path = questionary.text("What is the path to your resume PDF?").ask()
     
@@ -35,6 +36,23 @@ def run_wizard():
             questionary.Choice("Aggregator feeds (Remotive, Adzuna)", value="aggregators", checked=False),
         ]
     ).ask() or ["greenhouse", "ashby", "lever", "workable"]
+
+    add_custom = questionary.confirm("Do you want to add custom platforms or ATS domains?").ask()
+    custom_platforms = []
+    if add_custom:
+        custom_input = questionary.text(
+            "Enter custom platform names and domains (format: Name:domain.com, comma-separated):\n  e.g. SmartRecruiters:smartrecruiters.com, Breezy HR:breezy.hr"
+        ).ask()
+        if custom_input:
+            for item in custom_input.split(","):
+                item = item.strip()
+                if ":" in item:
+                    c_name, c_domain = item.split(":", 1)
+                    custom_platforms.append({
+                        "name": c_name.strip(),
+                        "domain": c_domain.strip().lower(),
+                        "enabled": True
+                    })
 
     skills_str = questionary.text(
         "Enter must-have skills or keywords to prioritize (comma-separated, leave blank to extract from resume):"
@@ -57,6 +75,8 @@ def run_wizard():
         "workable": "workable" in platform_choices,
         "aggregators": "aggregators" in platform_choices,
     }
+    if custom_platforms:
+        platforms_dict["custom"] = custom_platforms
 
     profile_data = {
         "name": name or "Job Seeker",
@@ -64,6 +84,7 @@ def run_wizard():
             "titles": titles or ["Paralegal"],
             "location": location or "New York, NY",
             "remote_only": not include_remote,
+            "include_hybrid": bool(include_hybrid),
             "min_salary": min_salary
         },
         "resume": {
