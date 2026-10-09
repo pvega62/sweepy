@@ -12,6 +12,8 @@ from mcp.server.fastmcp import FastMCP
 
 from swee import run_sweep_pipeline
 from engine.config import save_profile, load_config
+from engine.pdf_builder import build_pdf
+from engine.exporter import export_to_csv, export_to_json
 
 # Initialize FastMCP Server
 mcp = FastMCP("sweepy")
@@ -173,6 +175,110 @@ def get_results(
         return json.dumps(summary, indent=2)
     except Exception as e:
         return json.dumps({"status": "error", "message": f"Failed to read result file: {e}"})
+
+@mcp.tool()
+def export_report(
+    json_source: Optional[str] = None,
+    profile_stem: Optional[str] = None,
+    results_dir: str = "results",
+    formats: Optional[List[str]] = None,
+    candidate_name: str = "Job Seeker",
+    output_dir: Optional[str] = None
+) -> str:
+    """
+    Rebuilds report files (PDF, CSV, or JSON) from an existing sweep result without re-running discovery or scoring.
+    Use this to regenerate a report in a different format after a sweep has already completed.
+
+    Args:
+        json_source: Absolute path to the existing sweep JSON result file. Takes priority over profile_stem.
+        profile_stem: Profile identifier used to find the latest matching JSON (e.g. 'pedro_writer').
+                      Ignored when json_source is provided.
+        results_dir: Directory containing result files (default 'results').
+        formats: List of output formats to generate. Options: 'pdf', 'csv', 'json'. Defaults to ['pdf'].
+        candidate_name: Name displayed in the PDF report header (default 'Job Seeker').
+        output_dir: Directory to save regenerated reports. Defaults to same directory as the source JSON.
+
+    Returns:
+        JSON string with the status and absolute paths to all generated report files.
+    """
+    import datetime
+
+    if not formats:
+        formats = ["pdf"]
+    formats = [f.lower() for f in formats]
+
+    # Resolve the source JSON
+    source_json = None
+    if json_source:
+        source_json = json_source
+    else:
+        if not os.path.exists(results_dir):
+            return json.dumps({"status": "error", "message": f"Directory '{results_dir}' does not exist."})
+        pattern = os.path.join(results_dir, f"{profile_stem}_*.json" if profile_stem else "*.json")
+        matches = glob.glob(pattern)
+        if not matches:
+            return json.dumps({"status": "error", "message": "No JSON result files found matching the criteria."})
+        source_json = max(matches, key=os.path.getmtime)
+
+    if not os.path.exists(source_json):
+        return json.dumps({"status": "error", "message": f"Source file not found: {source_json}"})
+
+    try:
+        with open(source_json, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        roles = data if isinstance(data, list) else data.get("roles", [])
+    except Exception as e:
+        return json.dumps({"status": "error", "message": f"Failed to load JSON: {e}"})
+
+    if not roles:
+        return json.dumps({"status": "error", "message": "Source JSON contains no roles to export."})
+
+    # Determine output paths
+    base_name = os.path.splitext(source_json)[0]
+    target_dir = output_dir or os.path.dirname(source_json)
+    os.makedirs(target_dir, exist_ok=True)
+    stem = os.path.basename(base_name)
+    base_out = os.path.join(target_dir, stem)
+
+    generated = {}
+    errors = []
+
+    if "pdf" in formats:
+        try:
+            pdf_path = f"{base_out}.pdf"
+            pages = build_pdf(roles, pdf_path, candidate_name)
+            generated["pdf"] = os.path.abspath(pdf_path)
+            generated["pdf_pages"] = pages
+        except Exception as e:
+            errors.append(f"PDF: {e}")
+
+    if "csv" in formats:
+        try:
+            csv_path = f"{base_out}.csv"
+            num_rows, num_cols = export_to_csv(roles, csv_path)
+            generated["csv"] = os.path.abspath(csv_path)
+            generated["csv_rows"] = num_rows
+        except Exception as e:
+            errors.append(f"CSV: {e}")
+
+    if "json" in formats:
+        try:
+            json_path = f"{base_out}_export.json"
+            export_to_json(roles, json_path)
+            generated["json"] = os.path.abspath(json_path)
+        except Exception as e:
+            errors.append(f"JSON: {e}")
+
+    result = {
+        "status": "completed" if generated else "error",
+        "source_file": source_json,
+        "roles_exported": len(roles),
+        "generated": generated,
+    }
+    if errors:
+        result["errors"] = errors
+
+    return json.dumps(result, indent=2)
 
 if __name__ == "__main__":
     mcp.run()

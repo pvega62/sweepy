@@ -108,17 +108,18 @@ You can register custom ATS domains under `platforms.custom` to classify posting
 | **Auth-walled portals** | Handshake, corporate intranets | **Unsupported** | Require session cookies or SSO credentials. |
 | **Anti-bot aggregators** | Boards with Cloudflare Turnstile or PerimeterX | **Rate-limited** | Automated HTTP requests may trigger HTTP 403 blocks without proxy rotation. |
 
-## Model Context Protocol (MCP) integration
+## Model Context Protocol integration
 
 Sweepy provides a built-in MCP server (`server.py`) using `stdio` transport. This integration enables AI assistants, such as Antigravity and Claude Desktop, to configure search profiles, run sweeps, and analyze candidate matches directly through conversational prompts.
 
-### Available MCP tools
+### Available tools
 
 | Tool | Parameters | Description |
 | :--- | :--- | :--- |
 | `create_profile` | `name`, `titles`, `location`, `resume_path`, `remote_only`, `include_hybrid`, `min_salary`, `must_have_skills`, `platforms` | Generates a validated YAML search profile without running the terminal wizard. |
 | `run_sweep` | `profile_path` *(optional)* | Runs the 5-stage sweep pipeline, parses results, and outputs a structured summary. |
 | `get_results` | `profile_stem` *(optional)*, `limit` *(default 10)* | Retrieves the top matching roles, playbook recommendations, and artifact paths from the latest run. |
+| `export_report` | `json_source` or `profile_stem`, `formats` *(default `['pdf']`)*, `candidate_name`, `output_dir` | Regenerates a PDF, CSV, or JSON report from an existing sweep result without re-running discovery or scoring. |
 
 ### Connecting to Antigravity or Claude Desktop
 
@@ -130,7 +131,7 @@ Add Sweepy to your local client's MCP configuration file (for example, `mcp_conf
     "sweepy": {
       "command": "python",
       "args": [
-        "c:/Users/vegap/OneDrive/Documents/GitHub/career-sweep-engine/server.py"
+        "c:/Users/vegap/OneDrive/Documents/GitHub/sweepy/server.py"
       ]
     }
   }
@@ -138,12 +139,13 @@ Add Sweepy to your local client's MCP configuration file (for example, `mcp_conf
 ```
 
 Once registered, your AI assistant can run commands such as:
-- *"Create a Sweepy profile for Alex searching for remote Technical Writer roles in New York with my resume at `path/to/resume.pdf`."*
-- *"Run a sweep with my writer profile and show me the top 5 matches."*
+- *"Create a Sweepy profile for Alex searching for remote Technical Writer roles in New York. The résumé is at `path/to/resume.pdf`."*
+- *"Run a sweep with the writer profile and show the top 5 matches."*
+- *"Regenerate the PDF from the last pedro_writer sweep and save it to the Desktop."*
 
 ## Module reference
 - `swee.py`: Primary orchestrator and `argparse` command-line entry point.
-- `server.py`: Model Context Protocol (`stdio`) server exposing tools for LLM automation.
+- `server.py`: Model Context Protocol (`stdio`) server exposing tools for large language model (LLM) automation.
 - `engine/config.py`: Interactive command-line wizard and YAML parsing logic.
 - `engine/discovery.py`: Scraper orchestration, ATS detection, custom platform matching, and DataFrame de-duplication.
 - `engine/validator.py`: URL uptime checking and HTTP soft 404 detection.
