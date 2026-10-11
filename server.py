@@ -5,10 +5,15 @@ to automate job board discovery, profile generation, and match scoring.
 """
 
 import os
+import sys
 import glob
 import json
+import contextlib
 from typing import List, Optional
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP  # mcp 1.x
+except ImportError:
+    from mcp.server.mcpserver import MCPServer as FastMCP  # mcp 2.x renamed it
 
 from swee import run_sweep_pipeline
 from engine.config import save_profile, load_config
@@ -81,7 +86,9 @@ def create_profile(
     }
 
     target_path = output_filename if output_filename else None
-    saved_path = save_profile(profile_data, target_path)
+    # Sweepy prints progress to stdout. On stdio transport, stdout carries the MCP protocol, so send it to stderr.
+    with contextlib.redirect_stdout(sys.stderr):
+        saved_path = save_profile(profile_data, target_path)
     return f"Profile successfully created and saved to {saved_path}"
 
 @mcp.tool()
@@ -96,7 +103,8 @@ def run_sweep(profile_path: Optional[str] = None) -> str:
         JSON string summarizing active roles found, top match details, and generated report paths.
     """
     try:
-        results = run_sweep_pipeline(profile_path=profile_path)
+        with contextlib.redirect_stdout(sys.stderr):
+            results = run_sweep_pipeline(profile_path=profile_path)
         # Summarize to keep response token-efficient
         summary = {
             "status": results.get("status"),
