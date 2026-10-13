@@ -1,22 +1,38 @@
-import os
+from __future__ import annotations
+
 import json
+import os
+from typing import Dict, List, Tuple
+
 import pandas as pd
-from typing import List, Dict, Tuple
 
 EXPORT_COLUMNS = [
+    'rank',
+    'match_value',
+    'match_kind',
+    'resume_track',
     'match_score',
     'badge',
+    'unverified',
     'title',
     'company',
     'location',
     'platform',
+    'domain',
     'min_amount',
     'max_amount',
     'currency',
+    'comp',
+    'benefits',
+    'has_extended_response',
+    'app_format',
     'url',
     'key_matches',
     'missing_skills',
     'playbook',
+    'summary',
+    'requirements',
+    'alignment',
     'description'
 ]
 

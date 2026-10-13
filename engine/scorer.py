@@ -1,6 +1,12 @@
+from __future__ import annotations
+
+import logging
 import re
-from typing import List, Dict, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
+
 import pymupdf
+
+log = logging.getLogger("sweepy.engine.scorer")
 
 AMBER_KEYWORDS = [
     r"cover letter",
@@ -15,13 +21,14 @@ AMBER_KEYWORDS = [
 
 COMMON_DOMAIN_KEYWORDS = [
     # Legal & Compliance
-    "westlaw", "lexisnexis", "e-discovery", "ediscovery", "contract review", 
+    "westlaw", "lexisnexis", "e-discovery", "ediscovery", "contract review",
     "legal research", "document management", "case management", "litigation support",
     "relativity", "court filings", "docketing", "subpoena", "cite checking", "bluebook",
     # Tech & Design
     "python", "react", "typescript", "javascript", "sql", "css", "html", "git",
     "docker", "kubernetes", "aws", "rest api", "graphql", "figma", "node.js"
 ]
+
 
 def extract_resume_keywords(pdf_path: str, must_have_skills: List[str]) -> List[str]:
     """Extract skills and keywords from resume PDF and merge with must-have skills."""
@@ -41,16 +48,16 @@ def extract_resume_keywords(pdf_path: str, must_have_skills: List[str]) -> List[
             if re.search(r'\b' + re.escape(kw) + r'\b', full_text_lower):
                 extracted.add(kw.title() if len(kw) > 3 else kw.upper())
 
-        # Extract capitalized technical skill tokens
         tokens = re.findall(r'\b[A-Z][a-zA-Z0-9+#\.\-]{2,18}\b', full_text)
         for token in tokens:
             if token.lower() in COMMON_DOMAIN_KEYWORDS:
                 extracted.add(token)
 
     except Exception as e:
-        print(f"  [Warning] Could not parse resume PDF at '{pdf_path}': {e}")
+        log.warning("Could not parse resume PDF at %r: %s", pdf_path, e)
 
     return sorted(list(extracted), key=lambda x: x.lower())
+
 
 def determine_badge(job_desc: str) -> str:
     """Determine if application demands extended writing (Amber) or standard quick apply (Slate)."""
@@ -62,19 +69,20 @@ def determine_badge(job_desc: str) -> str:
             return "Amber"
     return "Slate"
 
+
 def score_jobs(
-    jobs: List[Dict], 
-    resume_path: str, 
-    must_have_skills: List[str], 
-    keywords_weight: float = 1.0
+    jobs: List[Dict],
+    resume_path: str,
+    must_have_skills: List[str],
+    keywords_weight: float = 1.0,
+    progress: Optional[Callable[[int, int, str], None]] = None,
 ) -> Tuple[List[Dict], List[str]]:
     """Score jobs against resume keywords and attach badge, matches, and playbook."""
     keywords = extract_resume_keywords(resume_path, must_have_skills)
-    keywords_lower = [k.lower() for k in keywords]
 
     scored_jobs = []
 
-    for job in jobs:
+    for idx, job in enumerate(jobs):
         desc = job.get("description", "").lower()
         matched = []
         missing = []
@@ -88,11 +96,10 @@ def score_jobs(
 
         if keywords:
             raw_pct = (len(matched) / len(keywords)) * 100
-            score = int(min(98, max(50, raw_pct * keywords_weight))) if matched else 50
+            score = max(0, min(100, int(raw_pct * keywords_weight)))
         else:
             score = 75
 
-        # Playbook guidance
         top_matches = matched[:3]
         if top_matches:
             playbook = f"Highlight your {', '.join(top_matches)} experience in your application."
@@ -106,6 +113,9 @@ def score_jobs(
         job["playbook"] = playbook
 
         scored_jobs.append(job)
+
+        if progress is not None and (idx + 1) % 25 == 0:
+            progress(idx + 1, len(jobs), "Scoring roles")
 
     scored_jobs.sort(key=lambda x: x.get("match_score", 0), reverse=True)
     return scored_jobs, keywords

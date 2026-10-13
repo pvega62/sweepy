@@ -1,0 +1,6 @@
+# Built In NYC category / search pages (one URL or path per line).
+# Lines starting with '#' are ignored. Paths are resolved against https://www.builtinnyc.com.
+# To extend, add a category or search URL.
+jobs/technical-writer
+jobs/ux-writer
+jobs/content-designer

@@ -23,13 +23,24 @@ resume:
     - "e-discovery"
     - "Contract Review"
   keywords_weight: 1.5
+  # Optional: multiple resume tracks for dual-targeting. The best track is chosen per
+  # job by keyword overlap; leave empty to use `path` as a single implicit track.
+  tracks:
+    - name: "Tech Writer Resume"
+      path: "C:/path/to/tech_writer.pdf"
+      color: "#1D4ED8"
+      route_keywords: ["api", "docs-as-code", "developer"]
+    - name: "UX Writer Resume"
+      path: "C:/path/to/ux_writer.pdf"
+      color: "#7E22CE"
+      route_keywords: ["ux", "content design", "microcopy"]
 
 platforms:
   greenhouse: true
   ashby: true
   lever: true
   workable: true
-  aggregators: false
+  aggregators: false   # Free feeds like Remotive, Adzuna
   # Add custom platforms or ATS domains:
   custom:
     - name: "SmartRecruiters"
@@ -38,6 +49,28 @@ platforms:
     - name: "Breezy HR"
       domain: "breezy.hr"
       enabled: true
+
+# Deterministic (no-key) sources. Empty orgs/slugs/categories fall back to the
+# curated seed lists in data/sources/.
+sources:
+  jobspy:
+    linkedin: true
+    indeed: true
+    glassdoor: true
+    zip_recruiter: true
+  ashby:
+    orgs: []            # e.g. ["modal", "camunda"]
+  workable:
+    slugs: []           # e.g. ["soda-data-nv", "reversinglabs"]
+  builtinnyc:
+    enabled: true
+    categories: []      # e.g. ["jobs/technical-writer"]
+
+report:
+  style: "cards"        # "cards" (default) | "legacy"
+  cards_per_page: 4
+  max_cards: 24         # 0 = unlimited
+  destinations: []      # extra directories to copy the PDF into
 
 export:
   format: "pdf,csv"

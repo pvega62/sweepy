@@ -39,6 +39,18 @@ resume:
 
   keywords_weight: 1.5
 
+  # Optional: multiple resume tracks for dual-targeting. The best track is chosen per
+  # job by keyword overlap; leave empty to use `path` as a single implicit track.
+  tracks:
+    - name: "Tech Writer Resume"
+      path: "C:/path/to/tech_writer.pdf"
+      color: "#1D4ED8"
+      route_keywords: ["api", "docs-as-code", "developer"]
+    - name: "UX Writer Resume"
+      path: "C:/path/to/ux_writer.pdf"
+      color: "#7E22CE"
+      route_keywords: ["ux", "content design", "microcopy"]
+
 # ─── Platform Settings ────────────────────────────
 # Set each platform to true or false to enable or disable it.
 platforms:
@@ -57,6 +69,30 @@ platforms:
     # - name: "My Company"
     #   domain: "careers.mycompany.com"
     #   enabled: true
+
+# ─── Deterministic (no-key) sources ──────────────
+# Empty orgs/slugs/categories fall back to the curated seed lists in data/sources/.
+sources:
+  jobspy:
+    linkedin: true
+    indeed: true
+    glassdoor: true
+    zip_recruiter: true
+  ashby:
+    orgs: []
+  workable:
+    slugs: []
+  builtinnyc:
+    enabled: true
+    categories: []
+
+# ─── Report Settings ─────────────────────────────
+report:
+  # "cards" (default) renders the curated card layout; "legacy" keeps the old layout.
+  style: "cards"
+  cards_per_page: 4
+  max_cards: 24       # 0 = unlimited
+  destinations: []    # extra directories to copy the PDF into
 
 # ─── Export Settings ──────────────────────────────
 export:
