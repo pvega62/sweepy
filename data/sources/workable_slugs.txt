@@ -1,0 +1,8 @@
+# Workable account slugs (one per line). Lines starting with '#' are ignored.
+# Fetch endpoint: https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true
+# To extend, add the slug from the company's Workable careers URL
+# (e.g. https://apply.workable.com/{slug}).
+soda-data-nv
+bask-health-1
+atria-health
+reversinglabs

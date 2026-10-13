@@ -14,10 +14,19 @@ AI assistants can interact with Sweepy through:
 
 ## Tool reference and sequencing
 
-Sweepy exposes four MCP tools through `server.py`:
+Sweepy exposes MCP tools through `server.py` in two workflows: a one-shot flow and a
+hybrid stateful flow that lets your LLM supply its own judgment.
 
+**One-shot (no LLM judgment):**
+
+```text
+create_profile → run_sweep → get_results → export_report (optional)
 ```
-create_profile ──► run_sweep ──► get_results ──► export_report (optional)
+
+**Hybrid stateful (LLM judgment through MCP):**
+
+```text
+run_sweep → get_jobs → submit_judgments → render_report
 ```
 
 ### 1. `create_profile`
@@ -37,14 +46,10 @@ Builds and saves a YAML configuration profile in the `profiles/` directory.
   - `output_filename`: Optional explicit destination YAML path. Defaults to `profiles/{name}_{title}.yaml`.
 
 ### 2. `run_sweep`
-Executes the five-stage discovery pipeline: discovery, validation, scoring, report generation, and CSV/JSON export.
-
-- **When to call**: Call when the user asks to run a job search or execute a sweep.
-- **Key parameters**:
-  - `profile_path`: Optional path to the YAML profile. If omitted, Sweepy automatically selects the most recently created or modified profile in `profiles/`.
+Executes the 5-stage discovery pipeline: discovery, validation, scoring, report generation, and CSV/JSON export. It populates the session with deterministic cards and returns their ids.
 
 ### 3. `get_results`
-Retrieves top matching roles, playbook recommendations, and artifact paths from a completed sweep without re-running scraping.
+Retrieves top matching roles, playbook recommendations, and artifact paths from a completed sweep without re-running discovery.
 
 - **When to call**: Call when the user asks for matches, summaries, top roles, or playbook recommendations after a sweep.
 - **Key parameters**:
@@ -53,7 +58,7 @@ Retrieves top matching roles, playbook recommendations, and artifact paths from 
   - `limit`: Number of top roles to return. Defaults to `10`.
 
 ### 4. `export_report`
-Rebuilds PDF, CSV, or JSON artifacts from existing sweep results without re-running network scraping or scoring.
+Rebuilds PDF, CSV, or JSON artifacts from existing sweep results without re-running discovery or scoring.
 
 - **When to call**: Call when the user requests a regenerated PDF or exported CSV. Also call when the user specifies a custom destination directory.
 - **Key parameters**:
@@ -62,6 +67,46 @@ Rebuilds PDF, CSV, or JSON artifacts from existing sweep results without re-runn
   - `formats`: List of formats to export. Defaults to `["pdf"]`. Can include `"pdf"`, `"csv"`, `"json"`.
   - `candidate_name`: Name to render in the header of the regenerated PDF. Defaults to `"Job Seeker"`.
   - `output_dir`: Optional target output folder. If omitted, writes to `results/`.
+
+### 5. `get_jobs`
+Returns the card records held in the current sweep session, ranked by match.
+
+- **When to call**: After `run_sweep`, to inspect the deterministic card records before supplying judgment.
+- **Key parameters**:
+  - `profile_stem`: Optional profile identifier to load a persisted session from disk.
+  - `results_dir`: Directory holding `report_session.json`. Defaults to `"results"`.
+  - `limit`: Optional number of cards to return (omit to return all).
+
+### 6. `submit_judgments`
+Overrides a job's deterministic card fields with LLM-supplied judgment.
+
+- **When to call**: After reviewing `get_jobs`, to supply your own `match_pct`, `resume_track`,
+  `domain`, `summary`, `requirements`, `alignment`, or `has_extended_response`.
+- **Key parameters**:
+  - `job_id`: Stable job id returned by `run_sweep` or `get_jobs`.
+  - `match_pct`: Optional LLM match percentage (0-100). Supplying it flips the report label from
+    `KEYWORD OVERLAP` to `MATCH` for that card.
+  - `resume_track`, `resume_color`, `domain`, `summary`, `requirements`, `alignment`,
+    `has_extended_response`, `app_format`, `comp`, `benefits`, `page_theme`: Optional overrides.
+    Only non-null fields are merged.
+
+### 7. `import_jobs`
+Appends agent-found jobs (canonical card schema) into the current session.
+
+- **When to call**: When your web search found roles the deterministic scrapers missed.
+- **Key parameters**:
+  - `jobs_json`: JSON string encoding a list of card records.
+  - `validate`: Optional; run URL validation before importing when `true` (default `false`—the agent already vetted the links).
+
+### 8. `render_report`
+Renders the cards PDF from the current session, writing through the sandbox.
+
+- **When to call**: After `submit_judgments` and/or `import_jobs`, to produce the final report.
+- **Key parameters**:
+  - `profile_stem`: Optional profile identifier to load a persisted session from disk.
+  - `results_dir`: Results directory. Defaults to `"results"`.
+  - `output_filename`: Optional explicit output PDF path (must stay inside the workspace).
+  - `playbook`: Optional playbook text; when empty, a deterministic playbook is generated.
 
 ---
 
@@ -86,11 +131,11 @@ Call `run_sweep` with the profile path. Note to the user that live board scrapin
 
 ### Step 4: Present Matches
 Format match results using markdown tables and structured lists:
-- Display the match score percentage prominently (for example, `92% Match`).
+- Display the match score percentage prominently (for example, `NN% MATCH`).
 - Provide active markdown links to each live application posting.
 - Show company name, location, and workplace model (Remote, Hybrid, On-site).
 - Include posted salary ranges when detected.
-- Highlight candidate strengths and resume keywords that triggered the match.
+- Highlight candidate strengths and résumé keywords that triggered the match.
 - Surface strategic playbook recommendations (for example, recommended portfolio samples or talking points).
 
 ### Step 5: Export on Demand
@@ -127,7 +172,9 @@ Ensure required dependencies are installed:
 - `mcp` (FastMCP server)
 - `reportlab` (PDF generation)
 - `pandas` (tabular processing and CSV export)
-- `beautifulsoup4` (HTML parsing)
 - `requests` (network requests and validation)
 - `pyyaml` (profile configuration)
-- `pypdf` / `pymupdf` (résumé text extraction)
+- `pymupdf` (PDF text extraction)
+- `python-jobspy` (job board scraping)
+- `questionary` (interactive wizard)
+- `anyio` (async I/O for MCP)

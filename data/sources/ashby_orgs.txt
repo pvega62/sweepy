@@ -1,0 +1,27 @@
+# Ashby job-board org slugs (one per line). Lines starting with '#' are ignored.
+# Fetch endpoint: https://api.ashbyhq.com/posting-api/job-board/{org}?includeCompensation=true
+# To extend, add the org slug from the company's Ashby careers URL
+# (e.g. https://jobs.ashbyhq.com/{org}).
+modal
+camunda
+wealthsimple
+deepnote
+aghanim
+perplexity
+optro
+percona
+nango
+hume-ai
+vals-ai
+illumio
+ziina
+harvey
+deepgram
+lovable
+replit
+llamaindex
+bruno
+afterquery
+stripe
+google-deepmind
+braze

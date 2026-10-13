@@ -1,8 +1,15 @@
-reportlab
-pymupdf
-requests
-pyyaml
-questionary
-python-jobspy
-pandas
-mcp>=1.0.0
+reportlab==5.0.1
+pymupdf==1.28.2
+requests==2.32.5
+pyyaml==6.0.3
+questionary==2.1.1
+python-jobspy==1.2.0
+# pandas is pinned to 2.x to stay compatible with the Python 3.10 CI matrix
+# (pandas 3.x requires Python 3.11+).
+pandas==2.2.3
+mcp==2.3.0
+anyio==4.12.1
+
+# NOTE: On Python 3.13, pymupdf may require source compilation if pre-built
+# wheels are not yet available. Install the Microsoft C++ Build Tools
+# ("Desktop development with C++") first, or use Python 3.10-3.12.

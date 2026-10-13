@@ -1,9 +1,12 @@
 import os
-from reportlab.lib.pagesizes import letter
+from xml.sax.saxutils import escape as _xml_escape
+
 from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
 
 def format_compensation(job: dict) -> str:
     min_amt = job.get("min_amount") or 0
@@ -41,10 +44,17 @@ def create_job_card(job: dict, rank: int, styles: dict) -> Table:
         border_color = colors.HexColor("#D1D5DB")
         badge_html = "<font color='#4B5563'><b>[STANDARD / QUICK APPLY - SLATE]</b></font>"
 
-    link_html = f"<a href='{url}' color='#2563EB'><u>{url[:45]}... [↗]</u></a>" if len(url) > 48 else f"<a href='{url}' color='#2563EB'><u>{url} [↗]</u></a>"
+    link_href = _xml_escape(url)
+    link_text = _xml_escape(url[:45] + "..." if len(url) > 48 else url)
+    link_html = f"<a href='{link_href}' color='#2563EB'><u>{link_text} [↗]</u></a>"
+
+    if score < 30:
+        score_html = f"<font color='#B45309'><b>{score}% MATCH (Low match)</b></font>"
+    else:
+        score_html = f"<font color='#047857'><b>{score}% MATCH</b></font>"
 
     lines = [
-        Paragraph(f"<b>Rank: #{rank}</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b><font color='#047857'>{score}% MATCH</font></b>", styles['HeaderStyle']),
+        Paragraph(f"<b>Rank: #{rank}</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {score_html}", styles['HeaderStyle']),
         Paragraph(f"<b>Role:</b> {title}", styles['BodyBold']),
         Paragraph(f"<b>Company:</b> {company} &nbsp;|&nbsp; <b>Location:</b> {location} ({platform})", styles['BodyStyle']),
         Paragraph(f"<b>Compensation:</b> {comp_str}", styles['BodyStyle']),
