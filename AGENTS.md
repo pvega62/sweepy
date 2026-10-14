@@ -58,13 +58,13 @@ Retrieves top matching roles, playbook recommendations, and artifact paths from 
   - `limit`: Number of top roles to return. Defaults to `10`.
 
 ### 4. `export_report`
-Rebuilds PDF, CSV, or JSON artifacts from existing sweep results without re-running discovery or scoring.
+Rebuilds PDF, PNG, CSV, or JSON artifacts from existing sweep results without re-running discovery or scoring.
 
 - **When to call**: Call when the user requests a regenerated PDF or exported CSV. Also call when the user specifies a custom destination directory.
 - **Key parameters**:
   - `json_source`: Optional direct path to a specific sweep result JSON file.
   - `profile_stem`: Optional stem name to locate the latest sweep JSON.
-  - `formats`: List of formats to export. Defaults to `["pdf"]`. Can include `"pdf"`, `"csv"`, `"json"`.
+  - `formats`: List of formats to export. Defaults to `["pdf"]`. Can include `"pdf"`, `"csv"`, `"json"`, or `"png"`. PNG rasterizes the report PDF, so requesting it also writes the PDF.
   - `candidate_name`: Name to render in the header of the regenerated PDF. Defaults to `"Job Seeker"`.
   - `output_dir`: Optional target output folder. If omitted, writes to `results/`.
 
@@ -174,7 +174,8 @@ Ensure required dependencies are installed:
 - `pandas` (tabular processing and CSV export)
 - `requests` (network requests and validation)
 - `pyyaml` (profile configuration)
-- `pymupdf` (PDF text extraction)
+- `pymupdf` (PDF text extraction and PNG rasterization)
 - `python-jobspy` (job board scraping)
+- `beautifulsoup4` (HTML stripping for Greenhouse, Lever, and Workable descriptions)
 - `questionary` (interactive wizard)
 - `anyio` (async I/O for MCP)

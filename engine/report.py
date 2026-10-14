@@ -163,9 +163,16 @@ def _render_card(job: dict, styles: dict) -> Table:
     platform = _esc(job.get("platform", ""))
 
     if has_extended:
+        # The deterministic app_format already starts with "Extended Written Prompts";
+        # the renderer's own "Extended Written Response:" label makes that prefix redundant.
+        body = app_format
+        for prefix in ("Extended Written Prompts", "Extended Written Response"):
+            if body.startswith(prefix):
+                body = body[len(prefix):].lstrip(": ").strip()
+                break
         format_p = (
             f'<b>Application Format:</b> <font color="#B45309"><b>Extended Written Response:</b> '
-            f'{app_format}</font>'
+            f'{body}</font>'
         )
         card_bg = BG_HIGHLIGHT
         card_border = BORDER_HIGHLIGHT

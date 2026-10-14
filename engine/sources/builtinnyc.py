@@ -7,10 +7,12 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from engine.sources._common import USER_AGENT
+
 log = logging.getLogger("sweepy.engine.sources.builtinnyc")
 
 _BASE = "https://www.builtinnyc.com"
-_HEADERS = {"User-Agent": "Sweepy/1.5 (+https://github.com/pvega62/sweepy)"}
+_HEADERS = {"User-Agent": USER_AGENT}
 
 # URL fragments that mark an outbound application link (a real ATS board).
 _ATS_HOSTS = ("ashbyhq.com", "workable.com", "greenhouse.io", "lever.co")

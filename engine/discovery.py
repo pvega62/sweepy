@@ -12,11 +12,16 @@ from jobspy import scrape_jobs
 from engine.sources import (
     fetch_ashby_org,
     fetch_builtin,
+    fetch_greenhouse_board,
+    fetch_lever_company,
     fetch_workable_slug,
     load_ashby_orgs,
     load_builtin_categories,
+    load_greenhouse_boards,
+    load_lever_companies,
     load_workable_slugs,
 )
+from engine.sources._common import title_matches
 
 log = logging.getLogger("sweepy.engine.discovery")
 
@@ -184,10 +189,7 @@ def discover_jobs(
 
 
 def _matches_titles(title: str, titles: List[str]) -> bool:
-    if not titles:
-        return True
-    lowered = title.lower()
-    return any(t and str(t).lower() in lowered for t in titles)
+    return title_matches(title, titles)
 
 
 def _source_job_matches_filters(
@@ -234,43 +236,78 @@ def discover_sources(
     remote_only: bool = False,
     include_hybrid: bool = True,
     min_salary: int = 0,
+    platforms: Optional[Dict] = None,
     progress: Optional[Callable[[int, int, str], None]] = None,
 ) -> Tuple[List[Dict], Dict[str, int]]:
-    """Discover jobs from the deterministic (no-key) Ashby / Workable / Built In NYC sources.
+    """Discover jobs from the deterministic (no-key) ATS sources.
 
-    Each org/slug/category is fetched independently; a failure is logged and skipped
-    so one bad org never kills the sweep.
+    Fetches Ashby, Workable, Greenhouse, Lever, and Built In NYC. Each
+    org/slug/board/company/category is fetched independently; a failure is logged
+    and skipped so one bad source never kills the sweep.
+
+    Every source honors ``sources.<x>.enabled`` (default ``True``) and, where a
+    matching key exists, ``platforms.<x>`` (default ``True``). Built In NYC has no
+    ``platforms`` counterpart, so it gates on ``enabled`` only.
     """
     sources_config = sources_config or {}
     titles = titles or []
+    platforms = platforms or {}
     all_jobs: List[dict] = []
     counts: Dict[str, int] = {}
 
     ashby_cfg = sources_config.get("ashby", {}) or {}
     workable_cfg = sources_config.get("workable", {}) or {}
+    greenhouse_cfg = sources_config.get("greenhouse", {}) or {}
+    lever_cfg = sources_config.get("lever", {}) or {}
     builtin_cfg = sources_config.get("builtinnyc", {}) or {}
 
-    ashby_orgs = list(ashby_cfg.get("orgs") or []) or load_ashby_orgs()
-    for org in ashby_orgs:
-        try:
-            jobs = fetch_ashby_org(org)
-        except Exception as e:
-            log.warning("Ashby source %r failed: %s", org, e)
-            continue
-        _add_source_jobs(jobs, all_jobs, counts, titles, remote_only, include_hybrid, min_salary)
-        if _REQUEST_DELAY:
-            time.sleep(_REQUEST_DELAY)
+    if ashby_cfg.get("enabled", True) and platforms.get("ashby", True):
+        ashby_orgs = list(ashby_cfg.get("orgs") or []) or load_ashby_orgs()
+        for org in ashby_orgs:
+            try:
+                jobs = fetch_ashby_org(org)
+            except Exception as e:
+                log.warning("Ashby source %r failed: %s", org, e)
+                continue
+            _add_source_jobs(jobs, all_jobs, counts, titles, remote_only, include_hybrid, min_salary)
+            if _REQUEST_DELAY:
+                time.sleep(_REQUEST_DELAY)
 
-    workable_slugs = list(workable_cfg.get("slugs") or []) or load_workable_slugs()
-    for slug in workable_slugs:
-        try:
-            jobs = fetch_workable_slug(slug)
-        except Exception as e:
-            log.warning("Workable source %r failed: %s", slug, e)
-            continue
-        _add_source_jobs(jobs, all_jobs, counts, titles, remote_only, include_hybrid, min_salary)
-        if _REQUEST_DELAY:
-            time.sleep(_REQUEST_DELAY)
+    if workable_cfg.get("enabled", True) and platforms.get("workable", True):
+        workable_slugs = list(workable_cfg.get("slugs") or []) or load_workable_slugs()
+        for slug in workable_slugs:
+            try:
+                jobs = fetch_workable_slug(slug)
+            except Exception as e:
+                log.warning("Workable source %r failed: %s", slug, e)
+                continue
+            _add_source_jobs(jobs, all_jobs, counts, titles, remote_only, include_hybrid, min_salary)
+            if _REQUEST_DELAY:
+                time.sleep(_REQUEST_DELAY)
+
+    if greenhouse_cfg.get("enabled", True) and platforms.get("greenhouse", True):
+        greenhouse_boards = list(greenhouse_cfg.get("boards") or []) or load_greenhouse_boards()
+        for board in greenhouse_boards:
+            try:
+                jobs = fetch_greenhouse_board(board, titles=titles)
+            except Exception as e:
+                log.warning("Greenhouse source %r failed: %s", board, e)
+                continue
+            _add_source_jobs(jobs, all_jobs, counts, titles, remote_only, include_hybrid, min_salary)
+            if _REQUEST_DELAY:
+                time.sleep(_REQUEST_DELAY)
+
+    if lever_cfg.get("enabled", True) and platforms.get("lever", True):
+        lever_companies = list(lever_cfg.get("companies") or []) or load_lever_companies()
+        for company in lever_companies:
+            try:
+                jobs = fetch_lever_company(company, titles=titles)
+            except Exception as e:
+                log.warning("Lever source %r failed: %s", company, e)
+                continue
+            _add_source_jobs(jobs, all_jobs, counts, titles, remote_only, include_hybrid, min_salary)
+            if _REQUEST_DELAY:
+                time.sleep(_REQUEST_DELAY)
 
     if builtin_cfg.get("enabled", True):
         categories = list(builtin_cfg.get("categories") or []) or load_builtin_categories()

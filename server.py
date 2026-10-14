@@ -47,7 +47,7 @@ with contextlib.redirect_stdout(sys.stderr):
     import anyio
 
     from engine.config import save_profile
-    from engine.exporter import export_to_csv, export_to_json
+    from engine.exporter import export_to_csv, export_to_json, export_to_png
     from engine.pdf_builder import build_pdf
     from engine.report import build_report
     from engine.session import SweepSession, stable_id
@@ -404,13 +404,13 @@ def export_report(
     output_dir: Optional[str] = None,
 ) -> str:
     """
-    Rebuilds report files (PDF, CSV, or JSON) from an existing sweep result without re-running discovery or scoring.
+    Rebuilds report files (PDF, PNG, CSV, or JSON) from an existing sweep result without re-running discovery or scoring.
 
     Args:
         json_source: Absolute path to the existing sweep JSON result file. Takes priority over profile_stem.
         profile_stem: Profile identifier used to find the latest matching JSON (e.g. 'pedro_writer').
         results_dir: Directory containing result files (default 'results').
-        formats: List of output formats to generate. Options: 'pdf', 'csv', 'json'. Defaults to ['pdf'].
+        formats: List of output formats to generate. Options: 'pdf', 'csv', 'json', 'png'. Defaults to ['pdf'].
         candidate_name: Name displayed in the PDF report header (default 'Job Seeker').
         output_dir: Directory to save regenerated reports. Defaults to same directory as the source JSON.
 
@@ -449,9 +449,10 @@ def export_report(
         generated = {}
         errors = []
 
-        if "pdf" in formats:
+        pdf_path = f"{base_out}.pdf"
+
+        if "pdf" in formats or "png" in formats:
             try:
-                pdf_path = f"{base_out}.pdf"
                 with _quiet_stdout():
                     if roles and "match_value" in roles[0]:
                         pages = build_report(roles, pdf_path, {"name": candidate_name})
@@ -461,6 +462,16 @@ def export_report(
                 generated["pdf_pages"] = pages
             except Exception as e:
                 errors.append(f"PDF: {e}")
+
+        if "png" in formats:
+            try:
+                if not os.path.exists(pdf_path):
+                    raise FileNotFoundError(f"PNG export needs a rendered PDF at {pdf_path!r}")
+                with _quiet_stdout():
+                    png_paths = export_to_png(pdf_path, base_out)
+                generated["png"] = png_paths
+            except Exception as e:
+                errors.append(f"PNG: {e}")
 
         if "csv" in formats:
             try:

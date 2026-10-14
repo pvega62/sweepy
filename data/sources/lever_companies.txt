@@ -1,0 +1,6 @@
+# Lever company tokens (one per line). Lines starting with '#' are ignored.
+# Fetch endpoint: https://api.lever.co/v0/postings/{company}?mode=json
+# To extend, copy the company token from the company's Lever careers URL
+# (e.g. https://jobs.lever.co/{company}).
+leverdemo
+spotify

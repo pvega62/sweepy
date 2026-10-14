@@ -50,17 +50,25 @@ platforms:
       domain: "breezy.hr"
       enabled: true
 
-# Deterministic (no-key) sources. Empty orgs/slugs/categories fall back to the
-# curated seed lists in data/sources/.
+# Deterministic (no-key) sources. Empty boards/orgs/slugs/categories fall back to the
+# curated seed lists in data/sources/. Each source also honors its platforms.<x> flag.
 sources:
   jobspy:
     linkedin: true
     indeed: true
     glassdoor: true
     zip_recruiter: true
+  greenhouse:
+    enabled: true
+    boards: []          # e.g. ["databricks", "gitlab", "cloudflare", "robinhood"]
   ashby:
+    enabled: true
     orgs: []            # e.g. ["modal", "camunda"]
+  lever:
+    enabled: true
+    companies: []       # e.g. ["leverdemo", "spotify"]
   workable:
+    enabled: true
     slugs: []           # e.g. ["soda-data-nv", "reversinglabs"]
   builtinnyc:
     enabled: true

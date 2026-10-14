@@ -71,16 +71,25 @@ platforms:
     #   enabled: true
 
 # ─── Deterministic (no-key) sources ──────────────
-# Empty orgs/slugs/categories fall back to the curated seed lists in data/sources/.
+# Empty boards/orgs/slugs/categories fall back to the curated seed lists in
+# data/sources/. Each source also honors its platforms.<x> flag.
 sources:
   jobspy:
     linkedin: true
     indeed: true
     glassdoor: true
     zip_recruiter: true
+  greenhouse:
+    enabled: true
+    boards: []
   ashby:
+    enabled: true
     orgs: []
+  lever:
+    enabled: true
+    companies: []
   workable:
+    enabled: true
     slugs: []
   builtinnyc:
     enabled: true

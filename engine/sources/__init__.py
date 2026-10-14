@@ -5,6 +5,8 @@ from typing import List
 
 from engine.sources.ashby import fetch_ashby_org
 from engine.sources.builtinnyc import fetch_builtin
+from engine.sources.greenhouse import fetch_greenhouse_board
+from engine.sources.lever import fetch_lever_company
 from engine.sources.workable import fetch_workable_slug
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,6 +34,14 @@ def load_workable_slugs() -> List[str]:
     return _load_lines("workable_slugs.txt")
 
 
+def load_greenhouse_boards() -> List[str]:
+    return _load_lines("greenhouse_boards.txt")
+
+
+def load_lever_companies() -> List[str]:
+    return _load_lines("lever_companies.txt")
+
+
 def load_builtin_categories() -> List[str]:
     return _load_lines("builtin_categories.txt")
 
@@ -39,8 +49,12 @@ def load_builtin_categories() -> List[str]:
 __all__ = [
     "fetch_ashby_org",
     "fetch_workable_slug",
+    "fetch_greenhouse_board",
+    "fetch_lever_company",
     "fetch_builtin",
     "load_ashby_orgs",
     "load_workable_slugs",
+    "load_greenhouse_boards",
+    "load_lever_companies",
     "load_builtin_categories",
 ]

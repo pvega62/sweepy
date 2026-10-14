@@ -209,6 +209,21 @@ def test_export_report_generates_all_formats(monkeypatch, tmp_path):
     assert os.path.exists(data["generated"]["json"])
 
 
+def test_export_report_generates_png(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    src = tmp_path / "foo_2026-01-01.json"
+    src.write_text(json.dumps([_job()]))
+
+    out = server.export_report(json_source=str(src), formats=["png"])
+    data = json.loads(out)
+
+    assert data["status"] == "ok"
+    assert data["generated"]["png"]
+    for png_path in data["generated"]["png"]:
+        assert os.path.exists(png_path)
+        assert png_path.endswith(".png")
+
+
 def test_export_report_no_roles(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
     src = tmp_path / "foo_2026-01-01.json"
