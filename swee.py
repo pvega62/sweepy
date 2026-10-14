@@ -14,7 +14,7 @@ from typing import Callable, Optional
 from engine.config import load_config, run_wizard
 from engine.discovery import discover_jobs, discover_sources
 from engine.enrich import enrich_jobs
-from engine.exporter import export_to_csv, export_to_json
+from engine.exporter import export_to_csv, export_to_json, export_to_png
 from engine.pdf_builder import build_pdf
 from engine.report import build_report
 from engine.scorer import score_jobs
@@ -101,6 +101,18 @@ def _project_role(role: dict) -> dict:
         "url": role.get("url"),
         "playbook": role.get("playbook", ""),
     }
+
+
+def _copy_to_destinations(files: list, destinations: list, label: str, log_fn: Callable) -> None:
+    for dest in destinations:
+        try:
+            dest_dir = os.path.expanduser(dest)
+            os.makedirs(dest_dir, exist_ok=True)
+            for path in files:
+                shutil.copyfile(path, os.path.join(dest_dir, os.path.basename(path)))
+            log_fn(f"  * {label} copied to: {dest_dir}")
+        except Exception as e:
+            log_fn(f"  [x] Could not copy {label} to {dest!r}: {e}")
 
 
 def run_sweep_pipeline(
@@ -203,7 +215,8 @@ def run_sweep_pipeline(
         sites=jobspy_sites, progress=progress
     )
     source_jobs, source_counts = discover_sources(
-        sources, titles, location, remote_only, include_hybrid, min_salary, progress=progress
+        sources, titles, location, remote_only, include_hybrid, min_salary,
+        platforms=platforms, progress=progress
     )
     jobs = jobs + source_jobs
     for plat_name, count in source_counts.items():
@@ -280,7 +293,7 @@ def run_sweep_pipeline(
 
     cards = enrich_jobs(scored_jobs, config)
 
-    if "pdf" in formats:
+    if "pdf" in formats or "png" in formats:
         if report_style == "legacy":
             total_pages = build_pdf(scored_jobs, pdf_file, name)
         else:
@@ -288,14 +301,18 @@ def run_sweep_pipeline(
         log_fn(f"  -> Building PDF: {total_pages} pages ({len(cards)} roles)")
         log_fn(f"  * PDF saved: {pdf_file}")
         generated_reports["pdf"] = os.path.realpath(pdf_file)
-        for dest in report_destinations:
-            try:
-                dest_dir = os.path.expanduser(dest)
-                os.makedirs(dest_dir, exist_ok=True)
-                shutil.copyfile(pdf_file, os.path.join(dest_dir, os.path.basename(pdf_file)))
-                log_fn(f"  * PDF copied to: {dest_dir}")
-            except Exception as e:
-                log_fn(f"  [x] Could not copy PDF to {dest!r}: {e}")
+        _copy_to_destinations([pdf_file], report_destinations, "PDF", log_fn)
+
+    if "png" in formats:
+        try:
+            png_files = export_to_png(pdf_file, base_output_path)
+            log_fn(f"  -> Building PNG: {len(png_files)} image(s)")
+            for png_file in png_files:
+                log_fn(f"  * PNG saved: {png_file}")
+            generated_reports["png"] = png_files
+            _copy_to_destinations(png_files, report_destinations, "PNG", log_fn)
+        except Exception as e:
+            log_fn(f"  [x] Could not build PNG: {e}")
 
     if "csv" in formats:
         export_rows = cards if report_style != "legacy" else scored_jobs

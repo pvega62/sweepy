@@ -5,10 +5,12 @@ from typing import List, Optional
 
 import requests
 
+from engine.sources._common import USER_AGENT
+
 log = logging.getLogger("sweepy.engine.sources.ashby")
 
 _API = "https://api.ashbyhq.com/posting-api/job-board/{org}"
-_HEADERS = {"User-Agent": "Sweepy/1.5 (+https://github.com/pvega62/sweepy)"}
+_HEADERS = {"User-Agent": USER_AGENT}
 
 # Curated display names for seed orgs; unknown slugs fall back to title case.
 _COMPANY_NAMES = {

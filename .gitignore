@@ -14,3 +14,9 @@ coverage.xml
 
 # Sweepy output
 results/
+
+# User-specific profiles (keep template_custom.yaml)
+profiles/pedro_writer.yaml
+
+# Vale
+styles/

@@ -1,7 +1,9 @@
 import math
+import os
 
 import pymupdf
 
+from engine.exporter import export_to_png
 from engine.report import build_report
 
 
@@ -114,3 +116,22 @@ def test_build_report_sets_page_fields(tmp_path):
     assert cards[0]["page"] == 1
     assert cards[4]["page"] == 2
     assert cards[0]["page_theme"].startswith("Page 1")
+
+
+def test_export_to_png_single_page_stem(tmp_path):
+    pdf = str(tmp_path / "r.pdf")
+    build_report([_card(1), _card(2)], pdf, _profile(max_cards=2))
+    paths = export_to_png(pdf, str(tmp_path / "r"))
+    assert paths == [os.path.realpath(str(tmp_path / "r.png"))]
+    with open(paths[0], "rb") as f:
+        assert f.read(8) == b"\x89PNG\r\n\x1a\n"
+
+
+def test_export_to_png_writes_one_image_per_page(tmp_path):
+    pdf = str(tmp_path / "r.pdf")
+    build_report([_card(i) for i in range(1, 11)], pdf, _profile())
+    paths = export_to_png(pdf, str(tmp_path / "r"))
+    assert len(paths) == 3
+    assert [os.path.basename(p) for p in paths] == ["r_page1.png", "r_page2.png", "r_page3.png"]
+    for path in paths:
+        assert os.path.getsize(path) > 0

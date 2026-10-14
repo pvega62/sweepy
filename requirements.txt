@@ -1,6 +1,7 @@
 reportlab==5.0.1
 pymupdf==1.28.2
 requests==2.32.5
+beautifulsoup4==4.15.0
 pyyaml==6.0.3
 questionary==2.1.1
 python-jobspy==1.2.0

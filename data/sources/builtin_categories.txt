@@ -4,3 +4,7 @@
 jobs/technical-writer
 jobs/ux-writer
 jobs/content-designer
+
+# Legal
+jobs/legal
+jobs/legal/search/paralegal

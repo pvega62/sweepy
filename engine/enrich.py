@@ -73,30 +73,58 @@ def route_track(title: str, description: str, tracks: List[dict]) -> dict:
     return best
 
 
-def _summary(description: str) -> str:
-    text = _strip_html(description)
+def _trim(text: str, limit: int = 280) -> str:
+    """Trim text to *limit* characters, cutting at the last sentence boundary when possible."""
+    text = _WS_RE.sub(" ", text).strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    last_period = cut.rfind(". ")
+    if last_period > limit * 0.5:
+        return cut[: last_period + 1].strip()
+    last_space = cut.rfind(" ")
+    if last_space > limit * 0.7:
+        return cut[:last_space].strip() + "…"
+    return cut.rstrip() + "…"
+
+
+def _strip_md(text: str) -> str:
+    """Remove markdown bold/italic markers and stray heading hashes."""
+    text = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", text or "")
+    text = re.sub(r"(?m)^\s*#{1,6}\s*", "", text)
+    return text.strip()
+
+
+def _summary(text: str) -> str:
     if not text:
         return ""
     sentences = [s.strip() for s in _SENTENCE_RE.split(text) if s.strip()]
-    return ". ".join(sentences[:2]) + ("." if len(sentences) > 2 else "")
+    cleaned = [s.rstrip(".!?").strip() for s in sentences]
+    summary = ". ".join(cleaned[:2])
+    if summary and not summary.endswith((".", "!", "?")):
+        summary += "."
+    return _trim(summary, 220)
 
 
-def _requirements(description: str) -> str:
-    text = _strip_html(description)
+def _requirements(text: str) -> str:
     if not text:
         return ""
     lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
     for i, line in enumerate(lines):
         if _HEADING_RE.match(line) and i + 1 < len(lines):
             body = " ".join(lines[i + 1 : i + 3])
-            return _WS_RE.sub(" ", body).strip()
+            return _trim(_WS_RE.sub(" ", body).strip())
     inline = re.search(r"(?i)\b(requirements|qualifications)\s*:?\s+([A-Z].{0,300})", text)
     if inline:
-        return inline.group(2).strip()
+        return _trim(inline.group(2).strip())
     bullets = [ln.lstrip("•-*").strip() for ln in lines if ln.lstrip().startswith(("•", "-", "*"))]
     if bullets:
-        return " ".join(bullets[:4])
-    return ""
+        return _trim(" ".join(bullets[:4]))
+    # No structured requirements found — return the first sentence as a fallback.
+    sentences = [s.strip() for s in _SENTENCE_RE.split(text) if s.strip()]
+    if sentences:
+        return _trim(sentences[0])
+    return _trim(text)
 
 
 def _fmt_amount(value: float) -> str:
@@ -150,9 +178,10 @@ def enrich_jobs(scored_jobs: List[dict], profile: dict) -> List[dict]:
     cards = []
     for job in scored_jobs:
         title = str(job.get("title", "") or "")
-        description = job.get("description", "") or ""
+        raw_description = job.get("description", "") or ""
+        description = _strip_md(_strip_html(raw_description))
         has_extended = (job.get("badge", "Slate") == "Amber")
-        track = route_track(title, description, tracks)
+        track = route_track(title, raw_description, tracks)
         url = job.get("url", "") or ""
         cards.append({
             "id": stable_id(url),

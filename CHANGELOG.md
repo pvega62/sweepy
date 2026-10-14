@@ -5,7 +5,49 @@ All notable changes to Sweepy are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.2.0] - 2026-10-13
+
+### Added
+- **Greenhouse and Lever run by default (no API key).** New deterministic fetchers (`engine/sources/greenhouse.py`, `engine/sources/lever.py`) sweep one full-content request per board/company and normalize results into the shared source schema.
+- Seed lists `data/sources/greenhouse_boards.txt` (databricks, gitlab, cloudflare, robinhood) and `data/sources/lever_companies.txt` (leverdemo, spotify). Add `sources.greenhouse.boards` / `sources.lever.companies` to override them.
+- `enabled: true` on all five deterministic sources (`greenhouse`, `ashby`, `lever`, `workable`, `builtinnyc`) in `config.sample.yaml` and `profiles/template_custom.yaml`.
+- Sweepy now depends on `beautifulsoup4` directly. Every source module sends one shared `User-Agent` (`engine/sources/_common.py`).
+- New README section "Default sources and how they run" documents the five default sources, Glassdoor-via-jobspy, the gating rules, and the bandwidth trade-off.
+- New README sections cover résumé formatting and keyword selection, alongside a table of contents and GitHub alert callouts.
+
+### Changed
+- **v2.2.0 behavior change.** Every deterministic source now honors `sources.<x>.enabled` (default `true`) **and** `platforms.<x>` (default `true`) where a matching key exists. Setting `platforms.greenhouse/ashby/lever/workable: false` now also stops that seed source. Before v2.2.0, it filtered only `python-jobspy` results. Built In NYC has no `platforms` key, so it honors `enabled` alone. No flag default changed. Existing profiles now also discover the new Greenhouse and Lever postings unless you turn off a source.
+- `discover_sources()` accepts a new optional `platforms` argument. `swee.py` passes the profile's `platforms` block through. The default (`None`) preserves prior behavior.
+- Greenhouse and Lever fetches pre-filter by profile `titles` (substring match) during normalization to bound memory and time.
+- Shared `html_to_text` and title-matching helpers now live in `engine/sources/_common.py` so the pre-filter and post-fetch filter stay in sync.
+- `.vale.ini` now enables the `A11y` package and removes the `Diataxis` style name that stopped Vale with `E201`. The repo now tracks the file.
+- Updated the stale `Sweepy/1.5` User-Agent in `ashby.py`, `workable.py`, and `builtinnyc.py` to the shared `Sweepy/2.2` constant.
+
+### Fixed
+- Sweepy now catches PNG rasterization errors, logs `[x] Could not build PNG`, and still writes CSV and JSON.
+
+## [2.1.0] - 2026-10-13
+
+### Added
+- PNG export. Add `png` to `export.format` and Sweepy rasterizes the report PDF to `{name}.png` (single page) or `{name}_page{N}.png` (multi-page), applying the same `report.destinations` copy list as the PDF.
+- `export_to_png()` in `engine/exporter.py` renders report PDFs to page images with `pymupdf`.
+- `scripts/make_sample.py` now writes `docs/sample_report.png` next to `docs/sample_report.pdf`, so the committed artifact regenerates from one command.
+- The `export_report` MCP tool accepts `png` in its `formats` list.
+
+### Changed
+- Requesting `png` also builds the PDF, because the PNG rasterizes the PDF pages. The PDF joins the generated report set.
+
+## [2.0.1] - 2026-10-13
+
+### Added
+- Legal-specific seed sources in `data/sources/`: 7 Ashby orgs (crosby, normlaw, hargrove-firm, lawhive, legora, norm-ai), 5 Workable slugs (shegerianand-associates-1, harper-james, mangonelawfirm, legalvision, valiente-mott-injury-attorneys-1), 2 BuiltInNYC categories (jobs/legal, jobs/legal/search/paralegal)
+- Updated `profiles/paralegal_nyc.yaml` with explicit legal sources demonstrating field customization
+- "Customizing Sources for Your Field" section in README with examples for Legal, Technical Writing, Healthcare/Biotech, and custom platforms
+
+### Changed
+- Documentation clarifies how empty source lists fall back to seed files and how explicit lists override them
+
+## [2.0.0] - 2026-10-13
 
 ### Added
 - Card-layout PDF report (`engine/report.py`) is now the default output. It faithfully reproduces the reference layout with title + meta block, 4 cards per page, amber/slate highlighting, per-page subtitles, and a closing playbook table.
@@ -26,11 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit test suite, `pyproject.toml` (ruff + pytest config), and GitHub Actions CI.
 
 ### Changed
+- `docs/sample_report.{pdf,png}` now render the top 4 cards from a real `paralegal_nyc` sweep (live LinkedIn postings for Gordon Rees, Considine Search, CF Legal, Morgan Lewis), not a synthetic mock. Regenerate with `python scripts/make_sample.py`.
 - The card layout is now the default PDF (`report.style: cards`); the previous layout is retained as `report.style: legacy`.
 - CSV/JSON export now includes the card schema columns.
 - `export_report` renders the card layout when the source JSON contains card records.
 - Replaced `print()` with `logging` across the engine and pipeline.
-- Removed the `redirect_stdout` band-aid in favor of disciplined logging.
+- Kept a `_quiet_stdout()` guard in `server.py` as belt-and-braces to keep the MCP stdio channel clean.
 - Corrected the `remote_only` field, which the wizard previously wrote inverted.
 - Fixed the `jobspy` country kwarg (`country_indeed`, replacing the invalid `country_alice`).
 - Removed the `[50, 98]` match-score floor so zero-match jobs score near 0.

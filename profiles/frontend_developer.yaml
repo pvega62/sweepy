@@ -7,7 +7,7 @@ search:
     - "UI Engineer"
   location: "San Francisco, CA"
   remote_only: true
-  include_hybrid: false   # Set to true to include hybrid positions
+  include_hybrid: false
   min_salary: 120000
 
 resume:
@@ -27,7 +27,27 @@ platforms:
   lever: true
   workable: true
   aggregators: false
-  custom: []   # Add custom ATS domains here if needed
+  custom: []
+
+sources:
+  jobspy:
+    linkedin: true
+    indeed: true
+    glassdoor: true
+    zip_recruiter: true
+  ashby:
+    orgs: []
+  workable:
+    slugs: []
+  builtinnyc:
+    enabled: false
+    categories: []
+
+report:
+  style: "cards"
+  cards_per_page: 4
+  max_cards: 24
+  destinations: []
 
 export:
   format: "pdf,json"

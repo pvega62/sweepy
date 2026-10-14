@@ -1,0 +1,8 @@
+# Greenhouse board tokens (one per line). Lines starting with '#' are ignored.
+# Fetch endpoint: https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true
+# To extend, copy the board token from the company's Greenhouse careers URL
+# (e.g. https://boards.greenhouse.io/{board}).
+databricks
+gitlab
+cloudflare
+robinhood

@@ -6,3 +6,10 @@ soda-data-nv
 bask-health-1
 atria-health
 reversinglabs
+
+# Legal / Law Firms
+shegerianand-associates-1
+harper-james
+mangonelawfirm
+legalvision
+valiente-mott-injury-attorneys-1

@@ -35,6 +35,7 @@ def _mock_engine(monkeypatch, jobs):
     monkeypatch.setattr(swee, "build_pdf", lambda *a, **k: 1)
     monkeypatch.setattr(swee, "export_to_csv", lambda *a, **k: (len(jobs), 5))
     monkeypatch.setattr(swee, "export_to_json", lambda *a, **k: None)
+    monkeypatch.setattr(swee, "export_to_png", lambda *a, **k: [])
 
 
 def _jobs(n=2):
@@ -98,6 +99,16 @@ def test_pipeline_all_formats(tmp_path, monkeypatch):
     profile["export"]["format"] = "pdf,csv,json"
     result = swee.run_sweep_pipeline(profile_dict=profile)
     assert set(result["reports"].keys()) == {"pdf", "csv", "json"}
+
+
+def test_pipeline_png_format(tmp_path, monkeypatch):
+    _mock_engine(monkeypatch, _jobs(2))
+    monkeypatch.setattr(swee, "export_to_png", lambda *a, **k: ["card.png"])
+    profile = _profile(str(tmp_path))
+    profile["export"]["format"] = "png"
+    result = swee.run_sweep_pipeline(profile_dict=profile)
+    assert result["reports"]["png"] == ["card.png"]
+    assert "pdf" in result["reports"]
 
 
 def test_pipeline_with_profile_path(tmp_path, monkeypatch):
