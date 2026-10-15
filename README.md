@@ -1,10 +1,10 @@
 # Sweepy
 
-**Sweepy** is a free Python automation tool. It aggregates, de-duplicates, and scores job postings across multiple ATS (Applicant Tracking System) platforms and job boards. It uses dynamic PDF résumé parsing to score matches and generates structured datasets with a curated, card-per-page PDF report.
+**Sweepy** is a free Python automation tool. It aggregates, de-duplicates, and scores job postings across ATS (Applicant Tracking System) platforms and job boards. It parses your PDF résumé to score matches and generates structured datasets with a curated, card-per-page PDF report.
 
 Sweepy works **with or without a Large Language Model (LLM)**. Without an LLM key it produces a fully deterministic report. The report includes keyword-overlap scores, automatic resume-track routing, and extracted summaries. It labels them as `NN% KEYWORD OVERLAP`. Connect your own LLM client through the Model Context Protocol (MCP) to supply richer judgment, and Sweepy re-labels those cards `NN% MATCH`.
 
-TL;DR: A friendly tool that **sweeps** the internet for job postings and scores them against your résumé.
+In short, a friendly tool that **sweeps** the internet for job postings and scores them against your résumé.
 
 ## Table of contents
 - [Features and architecture](#features-and-architecture)
@@ -24,19 +24,19 @@ TL;DR: A friendly tool that **sweeps** the internet for job postings and scores 
 - [License](#license)
 
 ## Features and architecture
-- **Multi-platform scraping**: Uses `python-jobspy` to extract postings from LinkedIn, Indeed, Glassdoor, and ZipRecruiter without API keys.
-- **Deterministic ATS sources**: Fetches Greenhouse and Lever job boards, Ashby and Workable accounts, and Built In NYC listings directly without a key. It normalizes them into one schema.
-- **ATS discovery and classification**: Inspects URLs to classify direct ATS endpoints, such as Greenhouse, Ashby, Lever, or Workable, versus aggregator feeds.
-- **Dynamic scoring**: Dynamically extracts text from your PDF résumé, computes a weighted overlap against the job description using `must_have_skills`, and identifies `missing_skills`.
-- **Dual resume routing**: Route each job to the best of N named resume tracks by keyword overlap. The route renders as a color-coded `SUBMIT: ...` badge.
-- **Application playbooks**: Each scored role includes a short `playbook` string — a tailored recommendation naming the résumé keywords to highlight in a cover letter, or a generic tailoring tip when nothing matches.
-- **Heuristic tagging**: Uses regex pattern matching to flag postings requiring extended written responses, such as "cover letter" or "assessment," versus standard quick applies.
-- **Link validation**: Executes live HTTP `GET` requests to prune expired links and detect platform-specific soft 404 redirects, for example, Ashby returning a blank state.
-- **Reporting**: Generates an atomic, styled card PDF (the default) plus prioritized `.csv` and `.json` data dumps. The legacy table layout remains available via `report.style: legacy`.
+- **Multi-platform scraping.** Uses `python-jobspy` to extract postings from LinkedIn, Indeed, Glassdoor, and ZipRecruiter without API keys.
+- **Deterministic ATS sources.** Fetches Greenhouse and Lever job boards, Ashby and Workable accounts, and Built In NYC listings directly without a key. It normalizes them into one schema.
+- **ATS discovery and classification.** Inspects URLs to classify direct ATS endpoints, such as Greenhouse, Ashby, Lever, or Workable, versus aggregator feeds.
+- **Dynamic scoring.** Extracts text from your PDF résumé, computes a weighted overlap against the job description using `must_have_skills`, and identifies `missing_skills`.
+- **Dual resume routing.** Routes each job to the best of N named resume tracks by keyword overlap. The route renders as a color-coded `SUBMIT: ...` badge.
+- **Application playbooks.** Each scored role includes a short `playbook` string. It lists the résumé keywords to highlight in a cover letter, or falls back to a generic tailoring tip when nothing matches.
+- **Heuristic tagging.** Uses regex pattern matching to flag postings requiring extended written responses, such as "cover letter" or "assessment," versus standard quick applies.
+- **Link validation.** Executes an HTTP `HEAD` request per link, falling back to `GET`. It prunes expired links and detects platform-specific soft 404 redirects, such as an Ashby blank state.
+- **Reporting.** Generates an atomic, styled card PDF (the default) plus prioritized `.csv` and `.json` data dumps. The legacy table layout remains available via `report.style: legacy`.
 
 ## Prerequisites
-- **Python 3.10+**
-- **Note for Python 3.13 users:** The `pymupdf` package may require source compilation if pre-built wheels are not available yet. Ensure you have the Microsoft C++ Build Tools installed and select the "Desktop development with C++" workload before you install dependencies.
+- **Python 3.10+**. CI tests 3.10, 3.11, and 3.12.
+- **Note for Python 3.13 users:** the `pymupdf` package may require source compilation when pre-built wheels are unavailable. Install the Microsoft C++ Build Tools and select the "Desktop development with C++" workload before you install dependencies.
 
 ## Installation
 
@@ -54,14 +54,15 @@ python swee.py --version
 ```
 
 ## Dependencies
-- **pymupdf**—reads and extracts text from your résumé PDF and rasterizes the PNG report exports.
-- **python-jobspy**—scrapes job boards securely without requiring an API key.
-- **beautifulsoup4**—parses HTML for the Greenhouse, Lever, Workable, and Built In NYC sources.
-- **reportlab**—generates the styled PDF report with clickable links.
-- **requests**—sends web requests to check if URLs are still active.
-- **pandas**—tabular processing for the CSV and JSON exports.
-- **pyyaml & questionary**—handle the interactive configuration wizard.
-- **mcp** and **anyio**—power the optional MCP server for AI assistant integration.
+- **pymupdf**: reads and extracts text from your résumé PDF and rasterizes the PNG report exports.
+- **python-docx**: reads `.docx` text so Sweepy can rebuild it as a PDF without Word.
+- **python-jobspy**: scrapes job boards securely without requiring an API key.
+- **beautifulsoup4**: parses HTML for the Greenhouse, Lever, Workable, and Built In NYC sources.
+- **reportlab**: generates the styled PDF report with clickable links.
+- **requests**: sends web requests to check if URLs are still active.
+- **pandas**: handles tabular processing for the CSV and JSON exports.
+- **pyyaml & questionary**: handle the interactive configuration wizard.
+- **mcp** and **anyio**: power the optional MCP server for AI assistant integration.
 
 ## Command-line usage
 
@@ -73,15 +74,39 @@ python swee.py --setup
 
 ### 2. Execution pipeline
 Run Sweepy by passing a configuration profile. The engine executes a 5-stage pipeline:
-1. **Profile loading**: Parses YAML and validates constraints.
-2. **Discovery**: Executes scrapers across configured ATS platforms and aggregates postings.
-3. **Validation**: Prunes dead links and parses soft 404 redirects.
-4. **Scoring**: Parses the provided résumé PDF, calculates keyword overlap, and generates custom application playbooks.
-5. **Generation**: Builds the date-stamped PDF, CSV, and JSON payloads, plus PNG page images when `png` is in the export format.
+1. **Profile loading.** Parses YAML and validates constraints.
+2. **Discovery.** Executes scrapers across configured ATS platforms and aggregates postings.
+3. **Validation.** Prunes dead links and parses soft 404 redirects.
+4. **Scoring.** Parses the provided résumé PDF, calculates keyword overlap, and generates custom application playbooks.
+5. **Generation.** Builds the date-stamped PDF, CSV, and JSON payloads, plus PNG page images when `png` is in the export format.
 
 ```bash
 python swee.py --profile profiles/your_custom_profile.yaml
 ```
+
+### 3. Convert a DOCX to PDF
+Convert a Word document (such as a résumé kept as `.docx`) to PDF:
+
+```bash
+python swee.py --docx path/to/resume.docx
+```
+
+Sweepy prompts for an output path. Leave it blank to save the PDF next to the DOCX
+with the same base name. The converter first rebuilds the PDF from the DOCX text with
+`python-docx` and `reportlab`. If Microsoft Word is available, it falls back to
+`docx2pdf` for a pixel-faithful render.
+
+### 4. Debug logging
+Add `--debug` to write a rotating debug log under `logs/` in the application
+directory:
+
+```bash
+python swee.py --debug --profile profiles/your_profile.yaml
+```
+
+Set `debug: true` in a profile or export `SWEEPY_DEBUG=1` to enable it without the
+flag. Pass `--log-dir DIR` to move the log elsewhere, and run `python swee.py --logs`
+to print the most recent entries.
 
 ## Resume formatting tips
 
@@ -89,7 +114,7 @@ Sweepy reads the PDF at `resume.path` and extracts its text. Clean, extractable 
 
 ### What Sweepy can't read
 
-- **Non-PDF files.** Point `resume.path` at a PDF. The MCP `create_profile` tool rejects any other extension.
+- **Non-PDF files.** Point `resume.path` at a PDF. The MCP `create_profile` tool rejects any other extension. Convert a `.docx` résumé first with `python swee.py --docx`.
 - **Scanned pages with no text layer.** Sweepy reads the text layer, not the page image. A scan or a photo of a résumé has no text layer, so scoring uses only `must_have_skills`. If that list is empty too, every role scores 75%.
 - **Password-protected PDFs.** Sweepy can't open encrypted files.
 - **Missing or corrupt files.** A bad path logs a warning and skips the extraction step. Only `must_have_skills` drives the score then.
@@ -161,8 +186,9 @@ resume:
 
 You define profiles in YAML format and store them in the `profiles/` directory. Open a profile in any plain-text editor. Notepad works. VS Code or another IDE adds YAML syntax highlighting and validation if you want it. Indent with spaces, not tabs. YAML rejects tabs.
 
-```yaml title="profiles/paralegal_nyc.yaml"
+```yaml
 name: "Alex Rivera"
+debug: false          # Set true to write debug logs under logs/
 
 search:
   titles:
@@ -233,7 +259,7 @@ sources:
 report:
   style: "cards"        # "cards" (default) | "legacy"
   cards_per_page: 4
-  max_cards: 24         # 0 = unlimited
+  max_cards: 24         # 0 or less = unlimited
   destinations: []      # extra directories to copy the PDF into
 
 export:
@@ -310,7 +336,7 @@ sources:
 ```
 
 ### Adding custom platforms
-Register additional ATS domains under `platforms.custom`:
+Register custom ATS domains under `platforms.custom`:
 ```yaml
 platforms:
   custom:
@@ -368,7 +394,7 @@ Register custom ATS domains under `platforms.custom` to classify postings direct
 
 ## Model context protocol (MCP) integration
 
-Sweepy provides a built-in MCP server (`server.py`) using `stdio` transport. This integration enables AI assistants, such as Antigravity and Claude Desktop, to configure search profiles, run sweeps, and analyze candidate matches directly through conversational prompts.
+Sweepy provides a built-in MCP server (`server.py`) that uses `stdio` transport. MCP clients such as Antigravity and Claude Desktop configure search profiles and run sweeps from a conversation.
 
 ### Available tools
 
@@ -377,18 +403,19 @@ Sweepy provides a built-in MCP server (`server.py`) using `stdio` transport. Thi
 | `create_profile` | `name`, `titles`, `location`, `resume_path`, `remote_only` *(default `false`)*, `include_hybrid` *(default `true`)*, `min_salary` *(default `0`)*, `must_have_skills`, `platforms`, `output_filename` | Generates a validated YAML search profile without running the terminal wizard. |
 | `run_sweep` | `profile_path` *(optional)* | Runs the sweep pipeline, populates the session with deterministic cards, and returns their ids. |
 | `get_jobs` | `profile_stem` *(optional)*, `results_dir` *(default `'results'`)*, `limit` *(optional)* | Returns the card records held in the current session. |
-| `submit_judgments` | `job_id`, `match_pct` *(optional)*, `resume_track`, `resume_color`, `domain`, `summary`, `requirements`, `alignment`, `has_extended_response`, `app_format`, `comp`, `benefits`, `page_theme` | Overrides a card's deterministic fields with LLM judgment; supplying `match_pct` flips the label to `MATCH`. |
+| `submit_judgments` | `job_id`, `match_pct` *(optional)*, `resume_track`, `resume_color`, `domain`, `summary`, `requirements`, `alignment`, `has_extended_response`, `app_format`, `comp`, `benefits`, `page_theme` | Overrides a card's deterministic fields with LLM judgment. Supplying `match_pct` flips the label to `MATCH`. |
 | `import_jobs` | `jobs_json`, `validate` *(default `false`)* | Appends agent-found jobs (canonical card schema) into the session. |
 | `render_report` | `profile_stem` *(optional)*, `results_dir` *(default `'results'`)*, `output_filename` *(optional)*, `playbook` *(optional)* | Renders the cards PDF from the session. |
 | `get_results` | `profile_stem` *(optional)*, `results_dir` *(default `'results'`)*, `limit` *(default `10`)* | Retrieves the top matching roles, playbook recommendations, and artifact paths from the most recent run. |
 | `export_report` | `json_source` *(optional)*, `profile_stem` *(optional)*, `results_dir` *(default `'results'`)*, `formats` *(default `['pdf']`; supports `pdf`, `png`, `csv`, `json`)*, `candidate_name` *(default `'Job Seeker'`)*, `output_dir` *(optional)* | Regenerates a PDF, PNG, CSV, or JSON report from an existing sweep result without re-running discovery or scoring. |
+| `convert_docx` | `docx_path`, `pdf_path` *(optional)* | Converts a `.docx` file to PDF with `python-docx` + `reportlab`, falling back to Microsoft Word when installed. |
 
 The hybrid stateful flow is `run_sweep → get_jobs → submit_judgments → render_report`. With no LLM
 at all, `run_sweep` alone still renders the full cards PDF from deterministic fields.
 
 ### Connecting to Antigravity or Claude Desktop
 
-Add Sweepy to your local client's MCP configuration file (for example, `mcp_config.json` or `claude_desktop_config.json`):
+Add Sweepy to your local client's MCP configuration file (such as `mcp_config.json` or `claude_desktop_config.json`):
 
 ```json
 {
@@ -410,9 +437,28 @@ Once registered, your AI assistant can run commands such as:
 
 For detailed LLM prompting patterns, tool sequencing, and workflows, consult [AGENTS.md](AGENTS.md).
 
+### Install the /sweepy skill
+
+Sweepy includes a ready-to-use `/sweepy` skill for skill-aware CLIs (Copilot CLI,
+Claude Code, Antigravity). Copy the bundled folder into your CLI's skills directory:
+
+```bash
+cp -r skills/sweepy ~/.claude/skills/sweepy   # adjust to your CLI's skills path
+```
+
+Then register the MCP server (above) and restart the CLI. The skill documents the
+three core flows:
+
+- **Start a new scrape**: `create_profile` then `run_sweep`.
+- **View the results of a scrape**: `get_results` for top matches and playbooks, or `get_jobs` for the full card set.
+- **Export the results to a CSV file**: `export_report` with `formats=["csv"]`.
+
+The skill also covers the CLI fallback (`python swee.py --setup`, `--profile`, and
+`--docx`) for environments without MCP support.
+
 ## Sample report
 
-Sweepy produces a card-style PDF report and can rasterize it to PNG. A real, single-page example (top 4 roles from the `paralegal_nyc` profile, live LinkedIn postings) commits for review:
+Sweepy produces a card-style PDF report and can rasterize it to PNG. The repository includes one real, single-page example for review: the top 4 roles from the `paralegal_nyc` profile, captured from live LinkedIn postings.
 
 - [Sample report (PDF)](docs/sample_report.pdf)
 - [Sample report, page 1 (PNG)](docs/sample_report.png)
@@ -430,18 +476,20 @@ Sweepy uses `python-jobspy` to scrape public job boards including LinkedIn, Inde
 See [`python-jobspy`](https://github.com/Bunsly/JobSpy) for the upstream scraper and its own usage notes.
 
 ## Module reference
-- `swee.py`: Primary orchestrator and `argparse` command-line entry point.
-- `server.py`: Model Context Protocol (`stdio`) server exposing tools for large language model (LLM) automation.
-- `engine/config.py`: Interactive command-line wizard and YAML parsing logic.
-- `engine/discovery.py`: Scraper orchestration (jobspy + deterministic sources), ATS detection, and deduplication.
-- `engine/sources/`: Deterministic Greenhouse, Ashby, Lever, Workable, and Built In NYC fetchers with seed lists in `data/sources/`.
-- `engine/validator.py`: URL uptime checking and HTTP soft 404 detection.
-- `engine/scorer.py`: Resume keyword extraction, percentage matching, and tagging.
-- `engine/enrich.py`: Deterministic card enrichment—summaries, requirements, comp, resume-track routing, and match provenance.
-- `engine/session.py`: Thread-safe card-record store backing the MCP hybrid stateful flow.
-- `engine/report.py`: The default card-layout PDF renderer (faithful port of the reference layout).
-- `engine/pdf_builder.py`: The legacy table-layout PDF renderer (`report.style: legacy`).
-- `engine/exporter.py`: CSV and JSON export, plus PNG rasterization of report PDFs.
+- `swee.py` is the primary orchestrator and `argparse` command-line entry point.
+- `server.py` is the Model Context Protocol (`stdio`) server that exposes tools for large language model (LLM) automation.
+- `engine/config.py` holds the interactive command-line wizard and YAML parsing logic.
+- `engine/discovery.py` handles scraper orchestration (jobspy + deterministic sources), ATS detection, and deduplication.
+- `engine/sources/` holds the deterministic Greenhouse, Ashby, Lever, Workable, and Built In NYC fetchers with seed lists in `data/sources/`.
+- `engine/validator.py` checks URL uptime and detects HTTP soft 404 responses.
+- `engine/scorer.py` handles resume keyword extraction, percentage matching, and tagging.
+- `engine/enrich.py` provides deterministic card enrichment for summaries, requirements, comp, resume-track routing, and match provenance.
+- `engine/session.py` is the thread-safe card-record store backing the MCP hybrid stateful flow.
+- `engine/report.py` renders the default card-layout PDF (a faithful port of the reference layout).
+- `engine/pdf_builder.py` renders the legacy table-layout PDF (`report.style: legacy`).
+- `engine/exporter.py` exports CSV and JSON, plus PNG rasterization of report PDFs.
+- `engine/docx.py` converts DOCX to PDF with python-docx and reportlab, and falls back to Word.
+- `engine/logging.py` writes opt-in debug logs under `logs/`.
 
 ## License
 

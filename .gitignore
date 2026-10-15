@@ -1,4 +1,5 @@
-CODE_CHANGES.md
+# Code Changes
+CH_CH_CH_CH_CHANGES.md
 
 # Python
 __pycache__/
@@ -15,8 +16,14 @@ coverage.xml
 # Sweepy output
 results/
 
+# Debug logs
+logs/
+
 # User-specific profiles (keep template_custom.yaml)
 profiles/pedro_writer.yaml
 
 # Vale
 styles/
+
+# Review Notes
+release_notes.md

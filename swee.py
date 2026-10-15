@@ -13,8 +13,10 @@ from typing import Callable, Optional
 
 from engine.config import load_config, run_wizard
 from engine.discovery import discover_jobs, discover_sources
+from engine.docx import convert_docx_to_pdf
 from engine.enrich import enrich_jobs
 from engine.exporter import export_to_csv, export_to_json, export_to_png
+from engine.logging import enable_debug_logging, recent_log_lines
 from engine.pdf_builder import build_pdf
 from engine.report import build_report
 from engine.scorer import score_jobs
@@ -63,10 +65,21 @@ def main() -> None:
     parser.add_argument("--version", action="store_true", help="Show engine version and dependencies")
     parser.add_argument("--setup", action="store_true", help="Run the interactive configuration wizard")
     parser.add_argument("--profile", type=str, help="Path to the YAML profile configuration to use")
+    parser.add_argument("--docx", type=str, metavar="PATH", help="Convert a DOCX file to PDF and exit")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging (saved under logs/)")
+    parser.add_argument("--log-dir", type=str, metavar="DIR", help="Directory for debug logs (default: logs/)")
+    parser.add_argument("--logs", action="store_true", help="Show the most recent debug log entries")
 
     args = parser.parse_args()
 
     _configure_logging()
+    debug_enabled = args.debug or os.environ.get("SWEEPY_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+    if debug_enabled:
+        enable_debug_logging(args.log_dir)
+
+    if args.logs:
+        _print_recent_logs(args.log_dir)
+        sys.exit(0)
 
     if args.version:
         print(f"Sweepy v{VERSION}")
@@ -76,6 +89,10 @@ def main() -> None:
 
     print("================================================================================")
     print(f"Sweepy v{VERSION}")
+
+    if args.docx:
+        _convert_docx(args.docx)
+        sys.exit(0)
 
     if args.setup:
         print("================================================================================\n")
@@ -90,6 +107,24 @@ def main() -> None:
         if not args.profile:
             print("Please run: python swee.py --setup")
         sys.exit(1)
+
+
+def _print_recent_logs(log_dir: Optional[str]) -> None:
+    lines = recent_log_lines(log_dir, lines=50)
+    if not lines:
+        print("No debug logs found. Run Sweepy with --debug to enable logging.")
+        return
+    print("".join(lines), end="")
+
+
+def _convert_docx(docx_path: str) -> None:
+    target = input("Where should the PDF go? (leave blank to save next to the DOCX): ").strip()
+    try:
+        out_path = convert_docx_to_pdf(docx_path, target or None)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    print(f"PDF saved: {out_path}")
 
 
 def _project_role(role: dict) -> dict:
@@ -151,6 +186,11 @@ def run_sweep_pipeline(
 
         config = load_config(profile_path)
         profile_stem = os.path.splitext(os.path.basename(profile_path))[0]
+
+    # CLI-only debug logging: MCP callers pass verbose=False, so the stdio
+    # stream stays clean and file logging stays disabled there.
+    if verbose and config.get("debug"):
+        enable_debug_logging()
 
     name = config.get("name", "Job Seeker")
     search = config.get("search", {})

@@ -3,12 +3,25 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Optional
+from typing import Callable, Optional
 
 import questionary
 import yaml
 
 log = logging.getLogger("sweepy.engine.config")
+
+try:
+    from reportlab.lib.colors import getAllNamedColors as _named_colors
+
+    _COLOR_NAMES = set(_named_colors())
+except Exception:  # pragma: no cover - reportlab is a core dependency
+    _COLOR_NAMES = {
+        "black", "white", "red", "green", "blue", "navy", "gray", "grey",
+        "purple", "orange", "yellow", "teal", "maroon", "olive", "silver",
+        "aqua", "fuchsia", "lime", "brown", "cyan", "magenta", "gold",
+    }
+
+_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 
 def _parse_salary(text: str) -> Optional[int]:
@@ -29,35 +42,79 @@ def _parse_salary(text: str) -> Optional[int]:
     return value
 
 
-def run_wizard():
-    log.info("╔══════════════════════════════════════════════════╗")
-    log.info("║            Sweepy — Profile Setup Wizard         ║")
-    log.info("╚══════════════════════════════════════════════════╝")
+def is_valid_color(value: str) -> bool:
+    """Return True when ``value`` is a #RGB/#RRGGBB hex code or a known color name."""
+    v = (value or "").strip()
+    if not v:
+        return False
+    if _HEX_COLOR_RE.match(v):
+        return True
+    return v.lower() in _COLOR_NAMES
 
-    name = questionary.text("What is your name?").ask()
 
-    titles_str = questionary.text(
+def _ask_color(track_name: str) -> str:
+    while True:
+        value = (
+            questionary.text(
+                f"Track color (hex code or color name, e.g. #1D4ED8 or navy) for {track_name}:"
+            ).ask()
+            or "#1D4ED8"
+        ).strip()
+        if is_valid_color(value):
+            return value
+        log.warning(
+            "Invalid color %r. Enter a valid hex code (#RGB or #RRGGBB) or a color name.",
+            value,
+        )
+
+
+class _Step:
+    """One wizard question: a stable key, a human label, and the ask callable."""
+
+    def __init__(self, key: str, label: str, ask: Callable):
+        self.key = key
+        self.label = label
+        self.ask = ask
+
+
+def _ask_name():
+    return questionary.text("What is your name?").ask()
+
+
+def _ask_titles():
+    raw = questionary.text(
         "What job titles are you looking for?\n  (Separate multiple titles with a comma)"
     ).ask()
-    titles = [t.strip() for t in titles_str.split(",") if t.strip()]
+    return [t.strip() for t in (raw or "").split(",") if t.strip()]
 
-    location = questionary.text("Where do you want to work? (City, State):").ask()
 
-    remote_only = questionary.confirm("Do you want to see remote-only roles?").ask()
-    include_hybrid = questionary.confirm("Do you want to include hybrid roles?").ask()
+def _ask_location():
+    return questionary.text("Where do you want to work? (City, State):").ask()
 
-    resume_path = questionary.text("What is the path to your resume PDF?").ask()
 
-    min_salary = 0
+def _ask_remote_only():
+    return questionary.confirm("Do you want to see remote-only roles?").ask()
+
+
+def _ask_include_hybrid():
+    return questionary.confirm("Do you want to include hybrid roles?").ask()
+
+
+def _ask_resume_path():
+    return questionary.text("What is the path to your resume PDF?").ask()
+
+
+def _ask_min_salary():
     while True:
-        min_salary_str = questionary.text("What is your minimum target salary? (Leave blank to skip):").ask()
-        parsed = _parse_salary(min_salary_str or "")
+        raw = questionary.text("What is your minimum target salary? (Leave blank to skip):").ask()
+        parsed = _parse_salary(raw or "")
         if parsed is not None:
-            min_salary = parsed
-            break
-        log.warning("Could not parse salary %r. Enter a number like 65000, 65,000, or 65k.", min_salary_str)
+            return parsed
+        log.warning("Could not parse salary %r. Enter a number like 65000, 65,000, or 65k.", raw)
 
-    platform_choices = questionary.checkbox(
+
+def _ask_platforms():
+    return questionary.checkbox(
         "Which platforms do you want to search?",
         choices=[
             questionary.Choice("Greenhouse", value="greenhouse", checked=True),
@@ -65,9 +122,11 @@ def run_wizard():
             questionary.Choice("Lever", value="lever", checked=True),
             questionary.Choice("Workable", value="workable", checked=True),
             questionary.Choice("Aggregator feeds (Remotive, Adzuna)", value="aggregators", checked=False),
-        ]
+        ],
     ).ask() or ["greenhouse", "ashby", "lever", "workable"]
 
+
+def _ask_custom_platforms():
     add_custom = questionary.confirm("Do you want to add custom platforms or ATS domains?").ask()
     custom_platforms = []
     if add_custom:
@@ -82,23 +141,30 @@ def run_wizard():
                     custom_platforms.append({
                         "name": c_name.strip(),
                         "domain": c_domain.strip().lower(),
-                        "enabled": True
+                        "enabled": True,
                     })
+    return custom_platforms
 
-    skills_str = questionary.text(
+
+def _ask_skills():
+    raw = questionary.text(
         "Enter must-have skills or keywords to prioritize (comma-separated, leave blank to extract from resume):"
     ).ask()
-    must_have_skills = [s.strip() for s in skills_str.split(",") if s.strip()]
+    return [s.strip() for s in (raw or "").split(",") if s.strip()]
 
-    formats = questionary.checkbox(
+
+def _ask_formats():
+    return questionary.checkbox(
         "What export formats do you want?",
         choices=[
             questionary.Choice("PDF Report", value="pdf", checked=True),
             questionary.Choice("CSV Spreadsheet", value="csv", checked=True),
-            questionary.Choice("JSON Data", value="json")
-        ]
+            questionary.Choice("JSON Data", value="json"),
+        ],
     ).ask() or ["pdf", "csv"]
 
+
+def _ask_tracks():
     tracks = []
     add_tracks = questionary.confirm(
         "Do you want to configure multiple resume tracks (e.g. Tech Writer vs UX Writer)?"
@@ -108,57 +174,152 @@ def run_wizard():
             track_name = questionary.text("Track name (leave blank to finish):").ask()
             if not track_name or not track_name.strip():
                 break
-            track_color = questionary.text(
-                f"Track color (hex, e.g. #1D4ED8) for {track_name.strip()}:"
-            ).ask() or "#1D4ED8"
+            track_color = _ask_color(track_name.strip())
             keywords_str = questionary.text(
                 f"Routing keywords for {track_name.strip()} (comma-separated):"
             ).ask()
             tracks.append({
                 "name": track_name.strip(),
-                "color": track_color.strip() or "#1D4ED8",
+                "color": track_color,
                 "route_keywords": [k.strip() for k in (keywords_str or "").split(",") if k.strip()],
             })
+    return tracks
 
+
+def _ask_debug():
+    return questionary.confirm(
+        "Enable debug logging? (Logs are saved under logs/ in the application directory):"
+    ).ask()
+
+
+def _build_steps():
+    return [
+        _Step("name", "Your name", _ask_name),
+        _Step("titles", "Job titles", _ask_titles),
+        _Step("location", "Location", _ask_location),
+        _Step("remote_only", "Remote-only roles", _ask_remote_only),
+        _Step("include_hybrid", "Hybrid roles", _ask_include_hybrid),
+        _Step("resume_path", "Resume path", _ask_resume_path),
+        _Step("min_salary", "Minimum salary", _ask_min_salary),
+        _Step("platforms", "Platforms", _ask_platforms),
+        _Step("custom_platforms", "Custom platforms", _ask_custom_platforms),
+        _Step("must_have_skills", "Must-have skills", _ask_skills),
+        _Step("formats", "Export formats", _ask_formats),
+        _Step("tracks", "Resume tracks", _ask_tracks),
+        _Step("debug", "Debug logging", _ask_debug),
+    ]
+
+
+def _collect(steps):
+    answers = {}
+    for step in steps:
+        answers[step.key] = step.ask()
+    return answers
+
+
+def _format_answer(step, value):
+    if step.key == "platforms":
+        return ", ".join(value) if value else "(none)"
+    if step.key == "custom_platforms":
+        return ", ".join(c["name"] for c in value) if value else "(none)"
+    if step.key == "tracks":
+        return ", ".join(t["name"] for t in value) if value else "(none)"
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if value in (None, ""):
+        return "(blank)"
+    return str(value)
+
+
+def _print_summary(answers, steps):
+    log.info("──────────────────────────────────────────────────")
+    log.info("Review your answers before submitting:")
+    for step in steps:
+        log.info("  %s: %s", step.label, _format_answer(step, answers.get(step.key)))
+    log.info("──────────────────────────────────────────────────")
+
+
+def _build_profile(answers):
+    custom_platforms = answers.get("custom_platforms") or []
     platforms_dict = {
-        "greenhouse": "greenhouse" in platform_choices,
-        "ashby": "ashby" in platform_choices,
-        "lever": "lever" in platform_choices,
-        "workable": "workable" in platform_choices,
-        "aggregators": "aggregators" in platform_choices,
+        "greenhouse": "greenhouse" in answers["platforms"],
+        "ashby": "ashby" in answers["platforms"],
+        "lever": "lever" in answers["platforms"],
+        "workable": "workable" in answers["platforms"],
+        "aggregators": "aggregators" in answers["platforms"],
     }
     if custom_platforms:
         platforms_dict["custom"] = custom_platforms
 
+    resume_path = (answers.get("resume_path") or "").strip().strip('"').replace("\\", "/")
+    titles = answers.get("titles") or []
     profile_data = {
-        "name": name or "Job Seeker",
+        "name": answers.get("name") or "Job Seeker",
         "search": {
             "titles": titles or ["Paralegal"],
-            "location": location or "New York, NY",
-            "remote_only": bool(remote_only),
-            "include_hybrid": bool(include_hybrid),
-            "min_salary": min_salary
+            "location": answers.get("location") or "New York, NY",
+            "remote_only": bool(answers.get("remote_only")),
+            "include_hybrid": bool(answers.get("include_hybrid")),
+            "min_salary": answers.get("min_salary", 0),
         },
         "resume": {
-            "path": resume_path.strip().strip('"').replace("\\", "/"),
-            "must_have_skills": must_have_skills,
-            "keywords_weight": 1.5
+            "path": resume_path,
+            "must_have_skills": answers.get("must_have_skills") or [],
+            "keywords_weight": 1.5,
         },
         "platforms": platforms_dict,
         "export": {
-            "format": ",".join(formats),
-            "output_dir": "results"
-        }
+            "format": ",".join(answers.get("formats") or ["pdf", "csv"]),
+            "output_dir": "results",
+        },
+        "debug": bool(answers.get("debug")),
     }
 
+    tracks = answers.get("tracks") or []
     if tracks:
         profile_data["resume"]["tracks"] = tracks
 
-    first_title_slug = re.sub(r'[^a-zA-Z0-9]+', '_', (titles[0] if titles else "custom")).strip('_').lower()
-    safe_name = re.sub(r'[^a-zA-Z0-9]+', '_', (name or "user")).strip('_').lower()
-    file_path = f"profiles/{safe_name}_{first_title_slug}.yaml"
+    return profile_data
 
-    return save_profile(profile_data, file_path)
+
+def _profile_path(profile_data):
+    titles = profile_data["search"]["titles"]
+    first_title_slug = re.sub(r'[^a-zA-Z0-9]+', '_', (titles[0] if titles else "custom")).strip('_').lower()
+    safe_name = re.sub(r'[^a-zA-Z0-9]+', '_', profile_data["name"]).strip('_').lower()
+    return f"profiles/{safe_name}_{first_title_slug}.yaml"
+
+
+def run_wizard():
+    log.info("╔══════════════════════════════════════════════════╗")
+    log.info("║            Sweepy — Profile Setup Wizard         ║")
+    log.info("╚══════════════════════════════════════════════════╝")
+
+    steps = _build_steps()
+    answers = _collect(steps)
+
+    while True:
+        _print_summary(answers, steps)
+        action = questionary.select(
+            "What would you like to do?",
+            choices=["Submit profile", "Edit an answer", "Start over"],
+        ).ask()
+        if action == "Submit profile":
+            break
+        if action == "Start over":
+            answers = _collect(steps)
+            continue
+
+        label = questionary.select(
+            "Which answer do you want to edit?",
+            choices=[step.label for step in steps],
+        ).ask()
+        step = next(s for s in steps if s.label == label)
+        answers[step.key] = step.ask()
+
+    profile_data = _build_profile(answers)
+    return save_profile(profile_data, _profile_path(profile_data))
 
 
 def save_profile(profile_data: dict, file_path: Optional[str] = None) -> str:

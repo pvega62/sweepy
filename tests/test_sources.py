@@ -1,4 +1,8 @@
+import requests
+
 import engine.discovery as discovery
+import engine.sources.ashby as ashby
+from engine.sources.ashby import fetch_ashby_org
 from engine.sources.ashby import normalize as normalize_ashby
 from engine.sources.builtinnyc import parse_jobs
 from engine.sources.greenhouse import normalize as normalize_greenhouse
@@ -52,6 +56,17 @@ def test_ashby_normalize_remote():
 
 def test_ashby_normalize_skips_missing_url():
     assert normalize_ashby(_ashby_job(jobUrl=""), "modal") is None
+
+
+def test_ashby_fetch_404_returns_empty(monkeypatch):
+    class _Resp:
+        status_code = 404
+
+        def raise_for_status(self):
+            raise requests.HTTPError("404 Not Found")
+
+    monkeypatch.setattr(ashby.requests, "get", lambda *a, **k: _Resp())
+    assert fetch_ashby_org("stale-org") == []
 
 
 def _workable_job(**overrides):

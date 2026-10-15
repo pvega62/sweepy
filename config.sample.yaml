@@ -4,6 +4,9 @@
 
 name: "Alex Rivera"
 
+# Set true to write rotating debug logs under logs/ in the application directory.
+debug: false
+
 search:
   titles:
     - "Paralegal"
