@@ -1,5 +1,6 @@
 reportlab==5.0.1
 pymupdf==1.28.2
+python-docx==1.2.0
 requests==2.32.5
 beautifulsoup4==4.15.0
 pyyaml==6.0.3
@@ -14,3 +15,8 @@ anyio==4.12.1
 # NOTE: On Python 3.13, pymupdf may require source compilation if pre-built
 # wheels are not yet available. Install the Microsoft C++ Build Tools
 # ("Desktop development with C++") first, or use Python 3.10-3.12.
+
+# Optional: docx2pdf renders DOCX -> PDF through Microsoft Word for pixel-faithful
+# output on Windows. Sweepy falls back to it automatically when Word is installed;
+# without it, the pure-Python python-docx + reportlab path is used instead.
+# docx2pdf==0.5.2

@@ -100,6 +100,11 @@ def fetch_ashby_org(org: str, timeout: float = 20) -> List[dict]:
     resp = requests.get(
         url, params={"includeCompensation": "true"}, headers=_HEADERS, timeout=timeout
     )
+    # A 404 means the org slug no longer exists on Ashby's public board. Treat
+    # it as an empty result so one stale seed org never fails the whole sweep.
+    if resp.status_code == 404:
+        log.warning("Ashby org %r not found (404): %s", org, url)
+        return []
     resp.raise_for_status()
     data = resp.json()
     jobs = []

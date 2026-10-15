@@ -103,9 +103,11 @@ def discover_jobs(
                 is_remote=remote_only,
                 # `country_indeed` is the Indeed country filter in python-jobspy (default "usa").
                 country_indeed="usa",
-                # LinkedIn returns postings without a description unless this is set, which
-                # would leave every description empty and score every role 0%.
-                linkedin_fetch_description=True,
+                # LinkedIn and ZipRecruiter return postings without a description
+                # unless this is set, which would leave every description empty
+                # and score every role 0%. (`linkedin_fetch_description` is the
+                # deprecated name; `fetch_description` covers both sites.)
+                fetch_description=True,
             )
 
             if not jobs_df.empty:

@@ -287,7 +287,9 @@ def build_report(jobs: List[dict], output_path: str, profile: dict, playbook: st
     """Render the cards PDF and return the total page count."""
     report = profile.get("report", {}) or {}
     cards_per_page = int(report.get("cards_per_page", 4) or 4)
-    max_cards = int(report.get("max_cards", 24) or 24)
+    # A blank or missing max_cards falls back to 24; 0 or less means no cap.
+    raw_max_cards = report.get("max_cards")
+    max_cards = 24 if raw_max_cards in (None, "") else int(raw_max_cards)
 
     cards = list(jobs) if max_cards <= 0 else list(jobs)[:max_cards]
     pages = _paginate(cards, cards_per_page)

@@ -8,7 +8,7 @@ Stream discipline: the MCP protocol travels over stdout, so nothing in this modu
 the engine may write to stdout. All engine output uses the `logging` module. This server
 does not attach a handler to the "sweepy" logger, so engine INFO records are silently
 dropped; only "sweepy.server" logs (startup + expected warnings) go to stderr. A
-`_quiet_stdout()` guard wraps engine calls that historically used print() as belt-and-braces.
+`_quiet_stdout()` guard wraps engine calls that historically used `print()`, as a redundant safeguard.
 
 Sandbox: `create_profile` and `export_report` write only inside `_WORKSPACE` (set via the
 `SWEEPY_WORKSPACE` env var, defaulting to this file's directory). Set
@@ -47,6 +47,7 @@ with contextlib.redirect_stdout(sys.stderr):
     import anyio
 
     from engine.config import save_profile
+    from engine.docx import convert_docx_to_pdf
     from engine.exporter import export_to_csv, export_to_json, export_to_png
     from engine.pdf_builder import build_pdf
     from engine.report import build_report
@@ -501,6 +502,44 @@ def export_report(
         return _err(str(exc))
     except Exception as exc:
         log.exception("export_report failed")
+        return _err(str(exc))
+
+
+@mcp.tool()
+def convert_docx(
+    docx_path: str,
+    pdf_path: Optional[str] = None,
+) -> str:
+    """
+    Converts a DOCX file to PDF.
+
+    Uses python-docx + reportlab first, falling back to Microsoft Word via
+    docx2pdf when Word is installed. A blank pdf_path saves the PDF next to the
+    DOCX. The output path must stay inside the workspace sandbox unless
+    SWEEPY_ALLOW_EXTERNAL_WRITES is set.
+
+    Args:
+        docx_path: Absolute or relative path to the .docx file to convert.
+        pdf_path: Optional output PDF path. Defaults to the DOCX directory.
+
+    Returns:
+        JSON string with the resolved output PDF path.
+    """
+    try:
+        resolved_docx = _resolve_read_path(docx_path, must_exist=True)
+        target = (
+            _safe_output_path(pdf_path)
+            if pdf_path
+            else _safe_output_path(os.path.splitext(resolved_docx)[0] + ".pdf")
+        )
+        with _quiet_stdout():
+            out_path = convert_docx_to_pdf(resolved_docx, target)
+        return _ok(pdf_path=os.path.realpath(out_path))
+    except (*_EXPECTED, RuntimeError) as exc:
+        log.warning("%s: %s", type(exc).__name__, exc)
+        return _err(str(exc))
+    except Exception as exc:
+        log.exception("convert_docx failed")
         return _err(str(exc))
 
 

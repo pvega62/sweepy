@@ -63,6 +63,12 @@ def test_max_cards_truncates(tmp_path):
     assert pages == 6
 
 
+def test_max_cards_zero_means_unlimited(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    pages = build_report([_card(i) for i in range(1, 31)], path, _profile(max_cards=0))
+    assert pages == math.ceil(30 / 4) == 8
+
+
 def test_links_per_page_matches_cards(tmp_path):
     path = str(tmp_path / "r.pdf")
     build_report([_card(i) for i in range(1, 11)], path, _profile())
