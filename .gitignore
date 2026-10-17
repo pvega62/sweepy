@@ -7,6 +7,11 @@ __pycache__/
 .venv/
 venv/
 
+# Packaging artifacts
+*.egg-info/
+build/
+dist/
+
 # Tooling
 .pytest_cache/
 .ruff_cache/
@@ -21,6 +26,7 @@ logs/
 
 # User-specific profiles (keep template_custom.yaml)
 profiles/pedro_writer.yaml
+profiles/.last_profile
 
 # Vale
 styles/

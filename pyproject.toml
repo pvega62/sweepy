@@ -1,3 +1,29 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sweepy"
+dynamic = ["version", "dependencies"]
+description = "Automated job board aggregator that scores every posting against your resume."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+
+[project.scripts]
+sweepy = "swee:main"
+
+[tool.setuptools]
+py-modules = ["swee", "server"]
+
+[tool.setuptools.packages.find]
+include = ["engine*"]
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
+dependencies = { file = ["requirements.txt"] }
+
 [tool.ruff]
 target-version = "py310"
 line-length = 100

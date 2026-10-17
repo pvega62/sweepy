@@ -14,33 +14,75 @@ def _read_docx_blocks(docx_path: str) -> list[tuple[str, str]]:
     PDF builder can approximate the source layout without Microsoft Word.
     """
     import docx  # python-docx
+    from docx.oxml.ns import qn
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
 
     document = docx.Document(docx_path)
-    blocks: list[tuple[str, str]] = []
-    for para in document.paragraphs:
+
+    def classify_paragraph(para: Paragraph) -> Optional[tuple[str, str]]:
         text = para.text.strip()
         if not text:
-            continue
+            return None
         style_name = (para.style.name or "").lower() if para.style is not None else ""
         if para.style is not None and style_name.startswith(("heading", "title")):
-            blocks.append(("heading", text))
-        elif style_name.startswith(("list", "bullet")) or text.startswith(("•", "-", "*")):
-            blocks.append(("bullet", text.lstrip("•-* ").strip()))
-        else:
-            blocks.append(("body", text))
+            return ("heading", text)
+        if style_name.startswith(("list", "bullet")) or text.startswith(("•", "-", "*")):
+            return ("bullet", text.lstrip("•-* ").strip())
+        return ("body", text)
+
+    blocks: list[tuple[str, str]] = []
+    for child in document.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            block = classify_paragraph(Paragraph(child, document))
+            if block is not None:
+                blocks.append(block)
+        elif child.tag == qn("w:tbl"):
+            try:
+                table = Table(child, document)
+            except Exception:  # noqa: BLE001 - skip malformed tables
+                continue
+            for row in table.rows:
+                try:
+                    cells = row.cells
+                except Exception:  # noqa: BLE001 - skip malformed rows
+                    continue
+                for cell in cells:
+                    try:
+                        text = cell.text.strip()
+                    except Exception:  # noqa: BLE001 - skip malformed cells
+                        continue
+                    if not text:
+                        continue
+                    if text.startswith(("•", "-", "*")):
+                        blocks.append(("bullet", text.lstrip("•-* ").strip()))
+                    else:
+                        blocks.append(("body", text))
     return blocks
 
 
-def _convert_with_python_docx(docx_path: str, pdf_path: str) -> None:
-    """Rebuild a clean single-column PDF from DOCX text with reportlab."""
+def docx_text(docx_path: str) -> str:
+    """Return the plain text of a DOCX, one paragraph or table cell per line.
+
+    Shares ``_read_docx_blocks`` with the PDF builder, so text extraction and
+    conversion always agree on what a DOCX contains. Raises ImportError when
+    python-docx is not installed.
+    """
+    return "\n".join(text for _, text in _read_docx_blocks(docx_path))
+
+
+def build_pdf_from_blocks(
+    blocks: list[tuple[str, str]], pdf_path: str, title: str = ""
+) -> None:
+    """Render ``(kind, text)`` blocks into a clean single-column PDF.
+
+    ``kind`` is one of ``heading``, ``bullet``, or ``body``. The DOCX and the
+    plain-text converters share this builder, so every source renders alike.
+    """
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-
-    blocks = _read_docx_blocks(docx_path)
-    if not blocks:
-        raise RuntimeError("The DOCX contains no extractable text.")
 
     styles = getSampleStyleSheet()
     heading_style = ParagraphStyle(
@@ -74,7 +116,7 @@ def _convert_with_python_docx(docx_path: str, pdf_path: str) -> None:
         rightMargin=inch,
         topMargin=inch,
         bottomMargin=inch,
-        title=os.path.splitext(os.path.basename(docx_path))[0],
+        title=title,
     )
 
     story = []
@@ -91,11 +133,21 @@ def _convert_with_python_docx(docx_path: str, pdf_path: str) -> None:
     doc.build(story)
 
 
-def _convert_with_docx2pdf(docx_path: str, pdf_path: str) -> None:
-    """Render the DOCX through Microsoft Word via the docx2pdf COM bridge."""
+def _convert_with_python_docx(docx_path: str, pdf_path: str) -> None:
+    """Rebuild a clean single-column PDF from DOCX text with reportlab."""
+    blocks = _read_docx_blocks(docx_path)
+    if not blocks:
+        raise RuntimeError("The DOCX contains no extractable text.")
+    build_pdf_from_blocks(
+        blocks, pdf_path, title=os.path.splitext(os.path.basename(docx_path))[0]
+    )
+
+
+def convert_with_word_bridge(source_path: str, pdf_path: str) -> None:
+    """Render a Word document through Microsoft Word via the docx2pdf COM bridge."""
     from docx2pdf import convert  # optional: requires Word on Windows
 
-    convert(docx_path, pdf_path)
+    convert(source_path, pdf_path)
 
 
 def _pdf_target(docx_path: str, pdf_path: Optional[str]) -> str:
@@ -135,7 +187,7 @@ def convert_docx_to_pdf(docx_path: str, pdf_path: Optional[str] = None) -> str:
         errors.append(f"python-docx: {exc}")
 
     try:
-        _convert_with_docx2pdf(resolved_docx, resolved_pdf)
+        convert_with_word_bridge(resolved_docx, resolved_pdf)
         log.info("Converted %s -> %s (docx2pdf / Microsoft Word)", resolved_docx, resolved_pdf)
         return resolved_pdf
     except Exception as exc:  # noqa: BLE001 - surface a combined error

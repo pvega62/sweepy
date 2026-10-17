@@ -28,10 +28,12 @@ from typing import List, Optional
 
 try:
     from mcp.server.fastmcp import Context, FastMCP  # mcp 1.x
+    from mcp.types import ToolAnnotations
     _MCP_MODULE = "mcp.server.fastmcp"
 except ImportError:
     from mcp.server.mcpserver import Context  # mcp 2.x
     from mcp.server.mcpserver import MCPServer as FastMCP
+    from mcp.types import ToolAnnotations
     _MCP_MODULE = "mcp.server.mcpserver"
 
 try:
@@ -47,6 +49,7 @@ with contextlib.redirect_stdout(sys.stderr):
     import anyio
 
     from engine.config import save_profile
+    from engine.documents import convert_to_pdf
     from engine.docx import convert_docx_to_pdf
     from engine.exporter import export_to_csv, export_to_json, export_to_png
     from engine.pdf_builder import build_pdf
@@ -190,7 +193,12 @@ def _err(message: str, **fields) -> str:
     return json.dumps(payload, default=str)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def create_profile(
     name: str,
     titles: List[str],
@@ -200,6 +208,7 @@ def create_profile(
     include_hybrid: bool = True,
     min_salary: int = 0,
     must_have_skills: Optional[List[str]] = None,
+    synonyms: Optional[list] = None,
     platforms: Optional[dict] = None,
     output_filename: Optional[str] = None
 ) -> str:
@@ -210,11 +219,14 @@ def create_profile(
         name: Full name of the candidate.
         titles: List of target job titles (e.g. ['Technical Writer', 'UX Writer']).
         location: Target location (e.g. 'New York, NY').
-        resume_path: Absolute or relative path to the candidate's PDF resume.
+        resume_path: Absolute or relative path to the candidate's PDF or DOCX resume.
         remote_only: True to restrict to 100% remote positions.
         include_hybrid: True to include hybrid positions (default True).
         min_salary: Minimum target annual base salary (0 if unconstrained).
         must_have_skills: Optional list of required skill keywords to boost matching.
+        synonyms: Optional list of interchangeable-term groups, such as
+            [['docs-as-code', 'documentation as code']]. Matching then treats every
+            member of a group as equivalent in both directions.
         platforms: Optional dictionary configuring platforms to sweep.
         output_filename: Optional custom YAML path (defaults to profiles/{name}_{title}.yaml).
 
@@ -228,8 +240,10 @@ def create_profile(
             raise ValueError("titles must be a non-empty list")
 
         resolved_resume = _resolve_read_path(resume_path, must_exist=True)
-        if not resolved_resume.lower().endswith(".pdf"):
-            raise ValueError(f"resume_path must point to a .pdf file: {resume_path!r}")
+        if not resolved_resume.lower().endswith((".pdf", ".docx")):
+            raise ValueError(
+                f"resume_path must point to a .pdf or .docx file: {resume_path!r}"
+            )
 
         platforms_config = {
             "greenhouse": True,
@@ -261,6 +275,8 @@ def create_profile(
                 "output_dir": "results",
             },
         }
+        if synonyms:
+            profile_data["resume"]["synonyms"] = synonyms
 
         target_path = (
             _safe_output_path(output_filename)
@@ -278,13 +294,24 @@ def create_profile(
         return _err(str(exc))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=True,
+))
 async def run_sweep(
     profile_path: Optional[str] = None,
     ctx: Context = None,
 ) -> str:
     """
     Executes a 5-stage job sweep pipeline using a specified profile or the default profile.
+
+    This produces deterministic keyword-overlap scores; it does not invoke LLM judgment.
+    For a normal job-search request, continue with get_jobs, assess the roles against the
+    candidate's resume and available job evidence, submit_judgments for each assessed
+    role, and render_report. Stop after this tool only when the user asks for keyword-only
+    results or the available evidence does not support responsible LLM assessment.
 
     This call may take several minutes: live board scraping and uptime verification run in
     a worker thread while progress notifications are forwarded to the client.
@@ -336,14 +363,21 @@ async def run_sweep(
         return _err(str(exc))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def get_results(
     profile_stem: Optional[str] = None,
     results_dir: str = "results",
     limit: int = 10,
 ) -> str:
     """
-    Retrieves the latest sweep results and report artifacts.
+    Retrieves the latest sweep results and report artifacts. Scores labeled KEYWORD
+    OVERLAP are deterministic first-pass scores, not LLM-assessed matches. For a normal
+    job-search request, use get_jobs and submit LLM judgments before presenting results.
 
     Args:
         profile_stem: Optional profile identifier to filter results (e.g. 'pedro_writer'). If omitted, retrieves latest.
@@ -395,7 +429,12 @@ def get_results(
         return _err(str(exc))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def export_report(
     json_source: Optional[str] = None,
     profile_stem: Optional[str] = None,
@@ -505,7 +544,12 @@ def export_report(
         return _err(str(exc))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def convert_docx(
     docx_path: str,
     pdf_path: Optional[str] = None,
@@ -516,7 +560,8 @@ def convert_docx(
     Uses python-docx + reportlab first, falling back to Microsoft Word via
     docx2pdf when Word is installed. A blank pdf_path saves the PDF next to the
     DOCX. The output path must stay inside the workspace sandbox unless
-    SWEEPY_ALLOW_EXTERNAL_WRITES is set.
+    SWEEPY_ALLOW_EXTERNAL_WRITES is set. Use convert_document when the file may
+    not be a DOCX; it handles .doc, .txt, .md, and .pdf as well.
 
     Args:
         docx_path: Absolute or relative path to the .docx file to convert.
@@ -543,14 +588,63 @@ def convert_docx(
         return _err(str(exc))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def convert_document(
+    document_path: str,
+    pdf_path: Optional[str] = None,
+) -> str:
+    """
+    Converts a supported document to PDF.
+
+    Accepts `.docx`, `.doc`, `.txt`, `.md`, and `.pdf`. DOCX files rebuild clean
+    text through python-docx and reportlab, then fall back to Microsoft Word via
+    docx2pdf. Legacy `.doc` files need Microsoft Word. Plain text and Markdown
+    render with headings and bullets. A `.pdf` source passes through unchanged.
+    A blank pdf_path saves the PDF next to the source file. The output path must
+    stay inside the workspace sandbox unless SWEEPY_ALLOW_EXTERNAL_WRITES is set.
+
+    Args:
+        document_path: Absolute or relative path to the file to convert.
+        pdf_path: Optional output PDF path. Defaults to the source directory.
+
+    Returns:
+        JSON string with the resolved output PDF path.
+    """
+    try:
+        source = _resolve_read_path(document_path, must_exist=True)
+        target = _safe_output_path(pdf_path or os.path.splitext(source)[0] + ".pdf")
+        with _quiet_stdout():
+            out_path = convert_to_pdf(source, target)
+        return _ok(pdf_path=os.path.realpath(out_path), source_path=source)
+    except (*_EXPECTED, RuntimeError) as exc:
+        log.warning("%s: %s", type(exc).__name__, exc)
+        return _err(str(exc))
+    except Exception as exc:
+        log.exception("convert_document failed")
+        return _err(str(exc))
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def get_jobs(
     profile_stem: Optional[str] = None,
     results_dir: str = "results",
     limit: Optional[int] = None,
 ) -> str:
     """
-    Returns the card records held in the current sweep session, ranked by match.
+    Returns the card records held in the current sweep session, ranked by deterministic
+    keyword overlap or submitted match score. For a normal job-search request, inspect
+    the available evidence and assess relevant cards against the candidate's resume;
+    then submit an independent LLM judgment for each assessed card.
 
     Args:
         profile_stem: Optional profile identifier to load a persisted session from disk.
@@ -574,7 +668,12 @@ def get_jobs(
         return _err(str(exc))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def submit_judgments(
     job_id: str,
     match_pct: Optional[int] = None,
@@ -595,6 +694,9 @@ def submit_judgments(
 
     Supplying match_pct upgrades the match label provenance to "match"; otherwise the
     deterministic keyword-overlap value is retained. Only non-null fields are merged.
+    Assess the candidate-to-role fit from the resume and available job evidence. Do not
+    copy the deterministic overlap score into match_pct or invent unsupported details.
+    In the standard job-search workflow, submit judgments for all roles you assessed.
 
     Args:
         job_id: Stable job id (from run_sweep or get_jobs).
@@ -644,7 +746,12 @@ def submit_judgments(
         return _err(str(exc))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=True,
+))
 def import_jobs(
     jobs_json: str,
     validate: bool = False,
@@ -698,7 +805,12 @@ def import_jobs(
         return _err(str(exc))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def render_report(
     profile_stem: Optional[str] = None,
     results_dir: str = "results",
@@ -707,6 +819,8 @@ def render_report(
 ) -> str:
     """
     Renders the cards PDF from the current session and writes it through the sandbox.
+    In the standard LLM-assisted workflow, call this after submitting judgments so the
+    report reflects assessed matches instead of only deterministic keyword overlap.
 
     Args:
         profile_stem: Optional profile identifier to load a persisted session from disk.

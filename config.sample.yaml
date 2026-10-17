@@ -26,6 +26,12 @@ resume:
     - "e-discovery"
     - "Contract Review"
   keywords_weight: 1.5
+  # Optional: interchangeable terms. Sweepy matches every member of a group in both
+  # directions, so a posting that writes `documentation as code` matches a resume
+  # that writes `docs-as-code`. Each group needs at least two terms.
+  synonyms:
+    - [docs-as-code, documentation as code]
+    - [e-discovery, ediscovery, electronic discovery]
   # Optional: multiple resume tracks for dual-targeting. The best track is chosen per
   # job by keyword overlap; leave empty to use `path` as a single implicit track.
   tracks:

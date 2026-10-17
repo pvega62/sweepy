@@ -3,8 +3,40 @@ import json
 import os
 
 import pytest
+import yaml
 
 import server
+
+
+def test_every_tool_declares_complete_behavior_annotations():
+    expected = {
+        "create_profile": (False, True, True, False),
+        "run_sweep": (False, True, False, True),
+        "get_results": (True, False, True, False),
+        "export_report": (False, True, True, False),
+        "convert_docx": (False, True, True, False),
+        "convert_document": (False, True, True, False),
+        "get_jobs": (False, False, True, False),
+        "submit_judgments": (False, True, True, False),
+        "import_jobs": (False, True, True, True),
+        "render_report": (False, True, True, False),
+    }
+    hint_names = (
+        "readOnlyHint",
+        "destructiveHint",
+        "idempotentHint",
+        "openWorldHint",
+    )
+
+    tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
+    assert set(tools) == set(expected)
+
+    for name, expected_hints in expected.items():
+        annotations = tools[name].annotations
+        assert annotations is not None
+        actual_hints = tuple(getattr(annotations, hint) for hint in hint_names)
+        assert actual_hints == expected_hints
+        assert all(type(hint) is bool for hint in actual_hints)
 
 
 @pytest.fixture
@@ -94,6 +126,16 @@ def test_create_profile_rejects_non_pdf_resume(tmp_path, monkeypatch):
     assert json.loads(out)["status"] == "error"
 
 
+def test_create_profile_accepts_docx_resume(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    docx = tmp_path / "resume.docx"
+    docx.write_bytes(b"PK\x03\x04 fake")
+    out = server.create_profile(name="Alice", titles=["Writer"], location="NYC", resume_path=str(docx))
+    data = json.loads(out)
+    assert data["status"] == "ok"
+    assert os.path.exists(data["profile_path"])
+
+
 def test_create_profile_success(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
     pdf = tmp_path / "resume.pdf"
@@ -102,6 +144,27 @@ def test_create_profile_success(tmp_path, monkeypatch):
     data = json.loads(out)
     assert data["status"] == "ok"
     assert os.path.exists(data["profile_path"])
+
+
+def test_create_profile_writes_synonym_groups(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    pdf = tmp_path / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    groups = [["docs-as-code", "documentation as code"]]
+
+    out = server.create_profile(
+        name="Alice",
+        titles=["Writer"],
+        location="NYC",
+        resume_path=str(pdf),
+        synonyms=groups,
+    )
+    data = json.loads(out)
+
+    assert data["status"] == "ok"
+    with open(data["profile_path"], encoding="utf-8") as handle:
+        saved = yaml.safe_load(handle)
+    assert saved["resume"]["synonyms"] == groups
 
 
 def test_get_results_excludes_export_files(tmp_path, monkeypatch):
@@ -312,3 +375,49 @@ def test_import_jobs_appends(tmp_path, monkeypatch, reset_session):
 def test_import_jobs_rejects_invalid_json(reset_session):
     out = server.import_jobs("not json")
     assert json.loads(out)["status"] == "error"
+
+
+def test_convert_document_writes_pdf_next_to_source(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    source = tmp_path / "notes.md"
+    source.write_text("# Alex Rivera\n\n- Westlaw\n", encoding="utf-8")
+
+    data = json.loads(server.convert_document(str(source)))
+
+    expected = os.path.realpath(str(tmp_path / "notes.pdf"))
+    assert data["status"] == "ok"
+    assert data["pdf_path"] == expected
+    assert os.path.exists(expected)
+
+
+def test_convert_document_accepts_explicit_target(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    source = tmp_path / "notes.txt"
+    source.write_text("Alex Rivera\n", encoding="utf-8")
+    target = tmp_path / "out" / "notes.pdf"
+
+    data = json.loads(server.convert_document(str(source), pdf_path=str(target)))
+
+    assert data["status"] == "ok"
+    assert data["pdf_path"] == os.path.realpath(str(target))
+    assert target.exists()
+
+
+def test_convert_document_rejects_unsupported_suffix(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG")
+
+    data = json.loads(server.convert_document(str(source)))
+
+    assert data["status"] == "error"
+    assert "Unsupported file type" in data["message"]
+
+
+def test_convert_document_reports_missing_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+
+    data = json.loads(server.convert_document(str(tmp_path / "gone.docx")))
+
+    assert data["status"] == "error"
+    assert "File not found" in data["message"]
