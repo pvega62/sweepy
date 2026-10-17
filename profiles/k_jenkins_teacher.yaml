@@ -1,0 +1,26 @@
+name: K Jenkins
+search:
+  titles:
+  - Teacher
+  location: New York, NY
+  remote_only: false
+  include_hybrid: true
+  min_salary: 0
+resume:
+  path: C:/Users/vegap/Downloads/Kevonnah Jenkins Resume_2026 copy.docx
+  must_have_skills: []
+  keywords_weight: 1.5
+platforms:
+  greenhouse: true
+  ashby: true
+  lever: true
+  workable: true
+  aggregators: true
+report:
+  style: cards
+  cards_per_page: 4
+  max_cards: 24
+export:
+  format: pdf,csv
+  output_dir: results
+debug: false

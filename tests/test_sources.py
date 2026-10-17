@@ -1,6 +1,9 @@
+import os
+
 import requests
 
 import engine.discovery as discovery
+import engine.sources as sources
 import engine.sources.ashby as ashby
 from engine.sources.ashby import fetch_ashby_org
 from engine.sources.ashby import normalize as normalize_ashby
@@ -67,6 +70,18 @@ def test_ashby_fetch_404_returns_empty(monkeypatch):
 
     monkeypatch.setattr(ashby.requests, "get", lambda *a, **k: _Resp())
     assert fetch_ashby_org("stale-org") == []
+
+
+def test_ashby_seed_orgs_are_clean_and_drop_stale_slugs():
+    path = os.path.join(sources.DATA_DIR, "ashby_orgs.txt")
+    with open(path, "r", encoding="utf-8") as f:
+        raw_lines = f.read().splitlines()
+
+    assert raw_lines[0].startswith("#")
+    tokens = [line.strip() for line in raw_lines if line.strip() and not line.strip().startswith("#")]
+    assert tokens == sources.load_ashby_orgs()
+    assert all(" " not in token for token in tokens)
+    assert not {"stripe", "google-deepmind", "braze"} & set(tokens)
 
 
 def _workable_job(**overrides):

@@ -11,15 +11,23 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 from typing import Callable, Optional
 
-from engine.config import load_config, run_wizard
+from engine.config import (
+    DOCS_URL,
+    last_profile_path,
+    load_config,
+    record_last_profile,
+    run_wizard,
+)
 from engine.discovery import discover_jobs, discover_sources
+from engine.documents import convert_to_pdf
 from engine.docx import convert_docx_to_pdf
-from engine.enrich import enrich_jobs
+from engine.enrich import enrich_jobs, get_tracks
 from engine.exporter import export_to_csv, export_to_json, export_to_png
 from engine.logging import enable_debug_logging, recent_log_lines
 from engine.pdf_builder import build_pdf
 from engine.report import build_report
-from engine.scorer import score_jobs
+from engine.scorer import normalize_synonyms, score_jobs, score_jobs_by_track
+from engine.updater import check_for_updates, update_sweepy
 from engine.validator import filter_valid_jobs
 
 log = logging.getLogger("sweepy")
@@ -37,6 +45,12 @@ def _read_version() -> str:
 VERSION = _read_version()
 
 _DEFAULT_JOBSPY_SITES = ["linkedin", "indeed", "glassdoor", "zip_recruiter"]
+
+_DEFAULT_PROFILE_CANDIDATES = (
+    "profiles/custom_profile.yaml",
+    "profiles/paralegal_nyc.yaml",
+    "config.sample.yaml",
+)
 
 
 def get_dependency_versions() -> str:
@@ -62,13 +76,22 @@ def _configure_logging() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sweepy - Automated Job Board Aggregator")
+    parser.add_argument("--run", action="store_true", help="Run a sweep with the last saved profile")
     parser.add_argument("--version", action="store_true", help="Show engine version and dependencies")
     parser.add_argument("--setup", action="store_true", help="Run the interactive configuration wizard")
     parser.add_argument("--profile", type=str, help="Path to the YAML profile configuration to use")
     parser.add_argument("--docx", type=str, metavar="PATH", help="Convert a DOCX file to PDF and exit")
+    parser.add_argument(
+        "--convert",
+        type=str,
+        metavar="PATH",
+        help="Convert a document to PDF beside the original file and exit",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging (saved under logs/)")
     parser.add_argument("--log-dir", type=str, metavar="DIR", help="Directory for debug logs (default: logs/)")
     parser.add_argument("--logs", action="store_true", help="Show the most recent debug log entries")
+    parser.add_argument("--update", action="store_true", help="Pull the latest Sweepy code and reinstall dependencies")
+    parser.add_argument("--check-update", action="store_true", help="Report whether a newer Sweepy version exists")
 
     args = parser.parse_args()
 
@@ -87,26 +110,91 @@ def main() -> None:
         print("Ready to sweep.")
         sys.exit(0)
 
-    print("================================================================================")
-    print(f"Sweepy v{VERSION}")
+    if args.update:
+        print(update_sweepy())
+        sys.exit(0)
+
+    if args.check_update:
+        print(check_for_updates())
+        sys.exit(0)
+
+    if args.convert:
+        _print_banner()
+        _convert_document(args.convert)
+        sys.exit(0)
 
     if args.docx:
+        _print_banner()
         _convert_docx(args.docx)
         sys.exit(0)
 
     if args.setup:
-        print("================================================================================\n")
-        profile_path = run_wizard()
-        print(f"To run your sweep, execute: python swee.py --profile {profile_path}")
+        _open_wizard(args.profile)
         sys.exit(0)
 
+    if args.run or args.profile:
+        _print_banner()
+        _run_from_cli(args.profile, use_last=args.run)
+        sys.exit(0)
+
+    _open_wizard(None)
+    sys.exit(0)
+
+
+def _print_banner() -> None:
+    print("================================================================================")
+    print(f"Sweepy v{VERSION}")
+
+
+def _default_profile_path() -> Optional[str]:
+    """Return the first conventional profile on disk, or None when the folder is empty."""
+    for candidate in _DEFAULT_PROFILE_CANDIDATES:
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _run_wizard_sweep(profile_data: dict, profile_path: Optional[str]) -> None:
+    """Run the pipeline from the menu and keep the menu alive when the sweep fails."""
     try:
-        run_sweep_pipeline(profile_path=args.profile)
+        run_sweep_pipeline(profile_dict=profile_data)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        print(f"Error: {exc}")
+        return
+    if profile_path:
+        record_last_profile(profile_path)
+
+
+def _open_wizard(profile_path: Optional[str]) -> None:
+    """Open the wizard's main menu, which can also run a sweep in place."""
+    saved_path = run_wizard(profile_path, run_sweep=_run_wizard_sweep)
+    if not saved_path:
+        return
+    print("\nTo run your sweep with this profile, execute:")
+    print("  python swee.py --run")
+    print(f"  (or: python swee.py --profile {saved_path})")
+
+
+def _run_from_cli(profile_path: Optional[str], *, use_last: bool) -> None:
+    """Run the sweep pipeline, resolving the last saved profile when ``--run`` is set."""
+    if not profile_path and use_last:
+        profile_path = last_profile_path() or _default_profile_path()
+        if not profile_path:
+            print("Error: no saved profile found. Create one with: python swee.py --setup")
+            print(f"Docs: {DOCS_URL}")
+            sys.exit(1)
+        print(f"Using the last saved profile: {profile_path}")
+
+    try:
+        run_sweep_pipeline(profile_path=profile_path)
     except FileNotFoundError as e:
         print(f"Error: {e}")
-        if not args.profile:
+        if not profile_path:
             print("Please run: python swee.py --setup")
         sys.exit(1)
+
+    if profile_path:
+        record_last_profile(profile_path)
 
 
 def _print_recent_logs(log_dir: Optional[str]) -> None:
@@ -115,6 +203,20 @@ def _print_recent_logs(log_dir: Optional[str]) -> None:
         print("No debug logs found. Run Sweepy with --debug to enable logging.")
         return
     print("".join(lines), end="")
+
+
+def _convert_document(source_path: str) -> None:
+    """Convert a supported document to PDF beside its source, with no prompts."""
+    source = os.path.realpath(os.path.expanduser(source_path.strip().strip('"')))
+    try:
+        out_path = convert_to_pdf(source)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    if os.path.realpath(out_path) == source:
+        print(f"This file is already a PDF: {out_path}")
+        return
+    print(f"PDF saved: {out_path}")
 
 
 def _convert_docx(docx_path: str) -> None:
@@ -174,15 +276,11 @@ def run_sweep_pipeline(
         profile_stem = re.sub(r'[^a-zA-Z0-9]+', '_', config.get("name", "profile")).strip('_').lower()
     else:
         if not profile_path:
-            if os.path.exists("profiles/custom_profile.yaml"):
-                profile_path = "profiles/custom_profile.yaml"
-            elif os.path.exists("profiles/paralegal_nyc.yaml"):
-                profile_path = "profiles/paralegal_nyc.yaml"
-            elif os.path.exists("config.sample.yaml"):
-                profile_path = "config.sample.yaml"
-                log_fn("Notice: No profile specified. Using config.sample.yaml by default.")
-            else:
+            profile_path = _default_profile_path()
+            if not profile_path:
                 raise FileNotFoundError("No profile provided and default configuration not found.")
+            if profile_path == "config.sample.yaml":
+                log_fn("Notice: No profile specified. Using config.sample.yaml by default.")
 
         config = load_config(profile_path)
         profile_stem = os.path.splitext(os.path.basename(profile_path))[0]
@@ -204,6 +302,7 @@ def run_sweep_pipeline(
     resume_path = resume.get("path", "")
     must_have_skills = resume.get("must_have_skills", [])
     keywords_weight = resume.get("keywords_weight", 1.0)
+    synonyms = normalize_synonyms(resume.get("synonyms"))
 
     platforms = config.get("platforms", {
         "greenhouse": True,
@@ -286,8 +385,11 @@ def run_sweep_pipeline(
     valid_jobs, expired_count = filter_valid_jobs(jobs, progress=progress)
     if expired_count > 0:
         log_fn(f"  [x] Removed {expired_count} expired postings (returned dead links or soft-404 redirects)")
-    log_fn(f"  * {len(valid_jobs)} verified active postings remain")
-
+    unverified_count = sum(1 for job in valid_jobs if job.get("unverified"))
+    if unverified_count:
+        log_fn(f"  * {len(valid_jobs)} active postings remain ({unverified_count} unverified)")
+    else:
+        log_fn(f"  * {len(valid_jobs)} verified active postings remain")
     if not valid_jobs:
         log_fn("All discovered jobs had invalid or dead links.")
         return {
@@ -303,8 +405,25 @@ def run_sweep_pipeline(
     # [4/5] Scoring against resume
     _progress(4, 5, "Scoring against resume")
     log_fn("\n[4/5] Scoring against resume...")
-    scored_jobs, extracted_keywords = score_jobs(
-        valid_jobs, resume_path, must_have_skills, keywords_weight, progress=progress
+    scored_jobs, extracted_keywords = (
+        score_jobs_by_track(
+            valid_jobs,
+            get_tracks(config),
+            resume_path,
+            must_have_skills,
+            keywords_weight,
+            progress=progress,
+            synonyms=synonyms,
+        )
+        if resume.get("tracks")
+        else score_jobs(
+            valid_jobs,
+            resume_path,
+            must_have_skills,
+            keywords_weight,
+            progress=progress,
+            synonyms=synonyms,
+        )
     )
     sample_keywords = ", ".join(extracted_keywords[:8])
     if len(extracted_keywords) > 8:

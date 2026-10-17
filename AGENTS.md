@@ -14,19 +14,29 @@ AI assistants can interact with Sweepy through:
 
 ## Tool reference and sequencing
 
-Sweepy exposes MCP tools through `server.py` in two workflows: a one-shot flow and a
-hybrid stateful flow that lets your LLM supply its own judgment.
+Sweepy exposes MCP tools through `server.py` in two workflows. The one-shot flow returns
+deterministic keyword-overlap scores. The hybrid stateful flow lets the calling LLM
+assess each role against the candidate's resume and available job evidence.
 
-**One-shot (no LLM judgment):**
+**Default for user-requested job searches: LLM-assisted hybrid flow**
+
+```text
+create_profile → run_sweep → get_jobs → assess roles → submit_judgments → render_report
+```
+
+Do not stop at `run_sweep` or present its `KEYWORD OVERLAP` scores as LLM matches.
+`run_sweep` performs discovery and deterministic keyword scoring; the MCP does not invoke
+the model automatically. The assistant must review the available evidence for each role,
+compare it with the resume and user preferences, and submit an independent judgment with
+`submit_judgments`. Do not copy a keyword score into `match_pct` or invent missing job
+requirements. If the available evidence cannot support a responsible assessment, disclose
+that limitation and label the score as keyword overlap rather than an LLM match.
+
+Use the keyword-only one-shot flow only when the user explicitly requests deterministic
+results or when the assistant cannot assess roles responsibly:
 
 ```text
 create_profile → run_sweep → get_results → export_report (optional)
-```
-
-**Hybrid stateful (LLM judgment through MCP):**
-
-```text
-run_sweep → get_jobs → submit_judgments → render_report
 ```
 
 ### 1. `create_profile`
@@ -46,7 +56,7 @@ Builds and saves a YAML configuration profile in the `profiles/` directory.
   - `output_filename`: optional explicit destination YAML path. Defaults to `profiles/{name}_{title}.yaml`.
 
 ### 2. `run_sweep`
-Executes the 5-stage discovery pipeline: discovery, validation, scoring, report generation, and CSV/JSON export. It populates the session with deterministic cards and returns their ids.
+Executes the 5-stage discovery pipeline: discovery, validation, deterministic keyword scoring, report generation, and CSV/JSON export. It populates the session with preliminary cards and returns their ids. This tool does not run LLM assessment; continue through `get_jobs`, `submit_judgments`, and `render_report` for the default user-requested search workflow.
 
 ### 3. `get_results`
 Retrieves top matching roles, playbook recommendations, and artifact paths from a completed sweep without re-running discovery.
@@ -84,8 +94,7 @@ Overrides a job's deterministic card fields with LLM-supplied judgment.
   `domain`, `summary`, `requirements`, `alignment`, or `has_extended_response`.
 - **Key parameters**:
   - `job_id`: stable job id returned by `run_sweep` or `get_jobs`.
-  - `match_pct`: optional LLM match percentage (0-100). Supplying it flips the report label from
-    `KEYWORD OVERLAP` to `MATCH` for that card.
+  - `match_pct`: LLM-assessed match percentage (0-100). Set this only after independently comparing the candidate's resume and preferences with available job evidence. Do not reuse the deterministic keyword-overlap score. Supplying it flips the report label from `KEYWORD OVERLAP` to `MATCH` for that card.
   - `resume_track`, `resume_color`, `domain`, `summary`, `requirements`, `alignment`,
     `has_extended_response`, `app_format`, `comp`, `benefits`, `page_theme`: optional overrides.
     Sweepy merges only non-null fields.
@@ -108,10 +117,19 @@ Renders the cards PDF from the current session, writing through the sandbox.
   - `output_filename`: optional explicit output PDF path (must stay inside the workspace).
   - `playbook`: optional playbook text. When empty, Sweepy generates a deterministic playbook.
 
-### 9. `convert_docx`
-Converts a `.docx` file to PDF.
+### 9. `convert_document`
+Converts any supported document to PDF.
 
-- **When to call.** When the user hands you a Word résumé instead of a PDF. `create_profile` requires a PDF, so convert the DOCX first.
+- **When to call.** When the user hands you a résumé, notes file, or other document that isn't a PDF and wants a PDF copy. `create_profile` needs a PDF input.
+- **Key parameters**:
+  - `document_path`: absolute or relative path to the `.docx`, `.doc`, `.txt`, `.md`, or `.pdf` file.
+  - `pdf_path`: optional output PDF path. Blank saves the PDF next to the source file.
+- **Behavior.** DOCX files rebuild through `python-docx` + `reportlab`, with a `docx2pdf` fallback when Microsoft Word is available. Legacy `.doc` files need Word. Text and Markdown render with headings and bullets, and `.pdf` sources pass through untouched. The output must stay inside the workspace sandbox unless you set `SWEEPY_ALLOW_EXTERNAL_WRITES`.
+
+### 10. `convert_docx`
+Converts a `.docx` file to PDF and nothing else.
+
+- **When to call.** When you know the file is a DOCX and want the Word-aware path. Prefer `convert_document` for any other extension.
 - **Key parameters**:
   - `docx_path`: absolute or relative path to the `.docx` file.
   - `pdf_path`: optional output PDF path. Blank saves the PDF next to the DOCX.
@@ -135,12 +153,16 @@ Don't require every optional field before proceeding; sensible defaults exist fo
 ### Build the profile
 Call `create_profile`. Tell the user where Sweepy saved the configuration file, and cite its path.
 
-### Execute the sweep
-Call `run_sweep` with the profile path. Note to the user that live board scraping and uptime verification take a few moments.
+### Execute and assess the sweep
+Call `run_sweep` with the profile path. Note to the user that live board scraping and uptime verification take a few moments. Explain that its initial scores reflect keyword overlap only, not model judgment.
+
+For the default workflow, call `get_jobs` and inspect the available details for the roles. Compare each assessable role with the candidate's resume and preferences, then call `submit_judgments` with an independently determined `match_pct` and evidence-grounded summary, requirements, and alignment. Assess all relevant cards returned by `get_jobs`; do not copy keyword scores or fabricate missing details. If evidence is insufficient, say so and retain the keyword-overlap label for those roles. Call `render_report` after submitting judgments.
+
+Use deterministic scores without LLM judgment only when the user specifically asks for keyword-only results or the role evidence is insufficient for responsible judgment.
 
 ### Present matches
 Format match results using markdown tables and structured lists:
-- Display the match score percentage prominently (such as `NN% MATCH`).
+- Display model-assessed scores as `NN% MATCH` only after submitting LLM judgments. Label unassessed scores `NN% KEYWORD OVERLAP`; never imply that calling the MCP by itself creates LLM matches.
 - Provide active Markdown links to each live job posting.
 - Show company name, location, and workplace model (Remote, Hybrid, On-site).
 - Include posted salary ranges when detected.
@@ -163,15 +185,41 @@ Run the primary orchestrator from the repository root:
 python swee.py --profile profiles/your_profile.yaml
 ```
 
+After one editable install (`pip install -e .`), the `sweepy` console script runs the same entry point, so `sweepy --profile profiles/your_profile.yaml` works from the repository root. The `python swee.py` form always works, installed or not.
+
 To run interactively with the terminal wizard:
 
 ```bash
 python swee.py
 ```
 
+The wizard opens its main menu. There you run a sweep with the loaded profile, create or load a saved profile, edit a profile, toggle debug logging, adjust scoring and scaling, manage aggregators, convert a document to PDF (the bonus entry accepts `.docx`, `.doc`, `.txt`, `.md`, and `.pdf` with no profile loaded), and update Sweepy. `python swee.py --setup` opens the same menu, and `python swee.py --setup --profile profiles/your_profile.yaml` opens that profile for editing straight away.
+
+Run a sweep with the last saved profile:
+
+```bash
+python swee.py --run
+```
+
+The wizard writes the last saved profile to `profiles/.last_profile`. When that file is missing, `--run` picks the newest profile in `profiles/`, then falls back to `profiles/custom_profile.yaml`, `profiles/paralegal_nyc.yaml`, and `config.sample.yaml`.
+
+Update the installed checkout with `python swee.py --update` (pull the latest code
+and reinstall dependencies). `python swee.py --check-update` reports whether a newer
+version exists without changing anything. The update refuses to run when the checkout
+holds uncommitted changes.
+
 Enable debug logging with `--debug` (writes rotating logs under `logs/`; show the
 latest entries with `python swee.py --logs`). Set `debug: true` in a profile or
 `SWEEPY_DEBUG=1` in the environment to enable it without the flag.
+
+Convert any supported document to PDF beside the original file, with no prompts:
+
+```bash
+python swee.py --convert path/to/resume.docx
+```
+
+`--convert` accepts `.docx`, `.doc`, `.txt`, `.md`, and `.pdf`. It prints the final
+PDF path and exits with code `1` when the file is missing or unsupported.
 
 ### Running the MCP server manually
 Start the stdio server directly:

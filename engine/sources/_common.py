@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 
 # Shared User-Agent for every deterministic source fetcher. Bump the version
 # here when the engine version changes so outbound requests stay identifiable.
-USER_AGENT = "Sweepy/2.3 (+https://github.com/pvega62/sweepy)"
+USER_AGENT = "Sweepy/2.4 (+https://github.com/pvega62/sweepy)"
 
 
 def title_matches(title: str, titles: List[str]) -> bool:

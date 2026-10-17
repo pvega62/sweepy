@@ -2,6 +2,39 @@
 
 Sweepy records every change in this file. It follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for the format and [Semantic Versioning](https://semver.org/spec/v2.0.0.html) for the version numbers.
 
+## [2.4.0] - 2026-10-15
+
+### Added
+- Self-update. `python swee.py --update` pulls the latest code and reinstalls `requirements.txt`; `python swee.py --check-update` reports whether a newer version exists. The update refuses to run when the checkout holds uncommitted changes. The setup wizard gains an "Update Sweepy" menu entry.
+- `sweepy` console command. `pyproject.toml` now holds the packaging metadata, an editable install (`pip install -e .`) registers a `sweepy` entry point, and `sweepy --run` matches `python swee.py --run`. The version comes from `VERSION`, and the dependencies come from `requirements.txt`, so neither list runs twice.
+- Wizard main menu. `python swee.py` opens a menu instead of starting the questionnaire, with choices to run a sweep, create a new profile, edit an existing profile, toggle debug logging, adjust scoring and scaling, add or edit aggregators, and convert a document to PDF. The header shows a bordered banner with the engine version and the active profile's job-title count, such as `Profile: Alex Rivera — 4 job titles`, or reads `Profile: (none loaded)` before a profile loads. The help screen lists every command flag plus links to the README and the documentation site.
+- `--run` shortcut. `python swee.py --run` sweeps with the last saved profile, recorded in `profiles/.last_profile`, then falls back to the newest profile in `profiles/` and the conventional filenames.
+- Wizard profile editing. The menu loads any YAML in `profiles/` into the review screen, keeps sections the wizard holds no question for (such as `sources`, `resume.synonyms`, and `report.destinations`), then lets you overwrite the file or save a new one. `--setup --profile profiles/your_profile.yaml` opens that file for editing straight away.
+- Wizard resume-path hint. The wizard prints the shortcut that copies a file's full path, matched to your operating system: `Ctrl+Shift+C` in File Explorer on Windows 11, `Option+Command+C` in Finder on macOS, and `Ctrl+Shift+C` in most Linux file managers.
+- Bonus document-to-PDF conversion. The wizard converts `.docx`, `.doc`, `.txt`, `.md`, and `.pdf` files from the main menu, with or without a profile loaded. Text sources render as styled headings and bullets, an existing `.pdf` passes through or copies to a new path, and `.doc` renders through Microsoft Word. The wizard also offers to convert any document you enter as a resume path.
+- Wizard navigation help. The wizard prints key controls and adds a "Show help" review-menu choice. Ctrl+C cancels setup cleanly.
+- Wizard log viewing. A "Show recent logs" review-menu choice prints the newest debug-log entries without leaving the wizard, matching `python swee.py --logs`.
+- Per-track resume scoring. Each job routes to one track and scores against that track's resume. The wizard now collects a resume path for each track.
+- DOCX resume support in scoring. `create_profile` and `extract_resume_keywords` accept `.docx` as well as `.pdf`.
+- Profile synonyms. `resume.synonyms` holds groups of interchangeable terms, and `create_profile` accepts a `synonyms` argument. Matching treats every member of a group as equivalent in both directions, so a posting that writes `documentation as code` matches a resume that writes `docs-as-code`.
+
+### Changed
+- Match scoring now measures coverage in both directions. Your keywords that appear in the posting supply 40% of the score. Requirements the posting states and your resume text already covers supply 60%. The old score divided resume-keyword hits by the full keyword list, which always ran low because a resume holds skills no given posting mentions. An earlier 26-posting comparison raised the mean from 17.8 to 31.4. Alias and priority refinements followed, and those still need evaluation against human relevance labels. The report label remains `NN% KEYWORD OVERLAP`. An LLM-supplied score renders as `MATCH`.
+- Explicit required posting terms now count twice as much as unlabeled terms. Preferred terms count half as much. Matching also recognizes regular plural forms and a small built-in alias list.
+- resume keyword extraction reads a `.docx` with `python-docx` instead of `pymupdf`. Previously `pymupdf` opened the `.docx` ZIP without error and returned reordered, partial text, so the same resume scored differently as DOCX and PDF: 17 of 109 keywords differed. Sweepy also flattens hard-wrapped lines before it reads tokens and phrases, which stopped a PDF's line breaks from fragmenting multi-word skills such as `First Aid`. On the same resume the two formats now agree on 81% of keywords, and the only remaining difference is one skill phrase the PDF wraps across two lines.
+- Keyword extraction no longer splits skills on commas inside parentheses. `Adobe Suite (InDesign, Acrobat)` produced the unusable fragments `(indesign` and `acrobat)`. Parenthetical qualifiers now strip cleanly, and unbalanced fragments are rejected.
+- Keyword extraction deduplicates case-insensitively, so `CSS`/`css`, `Docker`/`docker`, and `Javascript`/`javascript` no longer each consume a slot in the match denominator.
+- Keyword extraction drops months, date ranges, employer names, and stopword-led fragments such as `and child abuse`, `additional skills`, and `april 2024 - present`. On a real resume, unmatchable keywords fell from 67% of the keyword set to 43%.
+- Keywords are ordered by signal before the 60-keyword cap applies. The cap previously cut the alphabetically last terms, which discarded valid skills such as `python`, `react`, and `sql` while keeping fragments like `(indesign`.
+- DOCX-to-PDF conversion preserves table text, so a converted DOCX and the original PDF extract the same content.
+- The README gives readers a plain-language overview, a four-command quick start, sample reports, and links to the guides and reference. It moves seven deep-content pages into two Docusaurus groups. The existing pages reflect v2.4.0 behavior, and the docs spell "resume" without accents to match configuration keys.
+- Every source module sends `Sweepy/2.4` in the `User-Agent` header, up from `Sweepy/2.3`.
+- `data/sources/ashby_orgs.txt` drops three stale org slugs that returned HTTP 404 and logged a warning on every run: `stripe`, `google-deepmind`, and `braze`.
+
+### Fixed
+- The wizard can now attach a separate resume to each track instead of only the first track.
+- URL validation no longer deletes live postings that answer with a rate-limit or bot-protection code. `engine.validator.check_url` now returns `valid`, `unverified`, or `dead`. Sweepy keeps unverified postings, such as 403, 408, 425, 429, and 5xx, and counts a posting expired only when the link is definitively gone. A measured HEAD request returned 429, while a GET on the same URL returned 200 with the full 312 KB job page. One run pruned 130 of 156 live postings this way.
+
 ## [2.3.0] - 2026-10-15
 
 ### Added
@@ -12,7 +45,7 @@ Sweepy records every change in this file. It follows [Keep a Changelog](https://
 - `skills/sweepy/SKILL.md`: a ready-to-install `/sweepy` skill for skill-aware CLIs, plus a README install prompt.
 
 ### Changed
-- Deterministic keyword extraction now pulls a Skills section, frequent résumé terms, and capitalized phrases into the match set, capped at 60.
+- Deterministic keyword extraction now pulls a Skills section, frequent resume terms, and capitalized phrases into the match set, capped at 60.
 - Scoring now searches the job title as well as the description, which improves no-LLM match accuracy.
 - The jobspy fetcher uses `fetch_description=True` (replacing the deprecated `linkedin_fetch_description`), which restores LinkedIn and ZipRecruiter descriptions so those roles score instead of returning empty descriptions.
 - Every source module now sends `Sweepy/2.3` in the `User-Agent` header, up from `Sweepy/2.2`.
@@ -29,7 +62,7 @@ Sweepy records every change in this file. It follows [Keep a Changelog](https://
 - `enabled: true` on all five deterministic sources (`greenhouse`, `ashby`, `lever`, `workable`, `builtinnyc`) in `config.sample.yaml` and `profiles/template_custom.yaml`.
 - Sweepy now depends on `beautifulsoup4` directly. Every source module sends one shared `User-Agent` (`engine/sources/_common.py`).
 - New README section "Default sources and how they run" documents the five default sources, Glassdoor-via-jobspy, the gating rules, and the bandwidth trade-off.
-- New README sections cover résumé formatting and keyword selection. The README also gains a table of contents and GitHub alert callouts.
+- New README sections cover resume formatting and keyword selection. The README also gains a table of contents and GitHub alert callouts.
 
 ### Changed
 - **v2.2.0 behavior change.** Every deterministic source now honors `sources.<x>.enabled` (default `true`) **and** `platforms.<x>` (default `true`) where a matching key exists. Setting `platforms.greenhouse/ashby/lever/workable: false` now also stops that seed source. Before v2.2.0, it filtered only `python-jobspy` results. Built In NYC has no `platforms` key, so it honors `enabled` alone. No flag default changed. Existing profiles now also discover the new Greenhouse and Lever postings unless you turn off a source.
@@ -116,7 +149,7 @@ Sweepy records every change in this file. It follows [Keep a Changelog](https://
 ## [1.0.0] - 2026-10-01
 
 ### Added
-- The core modules handle the configuration wizard, scraper orchestration, URL validation, résumé scoring, and PDF/CSV/JSON reporting.
+- The core modules handle the configuration wizard, scraper orchestration, URL validation, resume scoring, and PDF/CSV/JSON reporting.
 - Custom ATS platform sweep capability.
 - Aligned engine architecture with the developer tutorial and overhauled docs.
 

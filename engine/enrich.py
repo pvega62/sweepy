@@ -181,7 +181,13 @@ def enrich_jobs(scored_jobs: List[dict], profile: dict) -> List[dict]:
         raw_description = job.get("description", "") or ""
         description = _strip_md(_strip_html(raw_description))
         has_extended = (job.get("badge", "Slate") == "Amber")
-        track = route_track(title, raw_description, tracks)
+        if job.get("resume_track"):
+            resume_track = job.get("resume_track")
+            resume_color = job.get("resume_color") or _DEFAULT_COLOR
+        else:
+            track = route_track(title, raw_description, tracks)
+            resume_track = track.get("name", "")
+            resume_color = track.get("color", _DEFAULT_COLOR)
         url = job.get("url", "") or ""
         cards.append({
             "id": stable_id(url),
@@ -193,8 +199,8 @@ def enrich_jobs(scored_jobs: List[dict], profile: dict) -> List[dict]:
             "location": _location(job),
             "match_value": int(job.get("match_score", 0)),
             "match_kind": "overlap",
-            "resume_track": str(track.get("name", "") or ""),
-            "resume_color": str(track.get("color", _DEFAULT_COLOR) or _DEFAULT_COLOR),
+            "resume_track": str(resume_track or ""),
+            "resume_color": str(resume_color or _DEFAULT_COLOR),
             "has_extended_response": has_extended,
             "app_format": _app_format(has_extended),
             "domain": _domain(job, profile),

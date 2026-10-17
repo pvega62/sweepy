@@ -39,6 +39,12 @@ resume:
 
   keywords_weight: 1.5
 
+  # Optional: interchangeable terms. Sweepy matches every member of a group in both
+  # directions, so a posting that writes `docs-as-code` matches a resume that writes
+  # `documentation as code`. Each group needs at least two terms.
+  synonyms:
+    - [docs-as-code, documentation as code]
+
   # Optional: multiple resume tracks for dual-targeting. The best track is chosen per
   # job by keyword overlap; leave empty to use `path` as a single implicit track.
   tracks:

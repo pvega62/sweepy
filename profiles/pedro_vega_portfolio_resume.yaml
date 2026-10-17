@@ -1,0 +1,29 @@
+name: Pedro Vega
+search:
+  titles:
+  - Technical Writer
+  - UX Writer
+  - Content Designer
+  location: New York, NY
+  remote_only: false
+  include_hybrid: true
+  min_salary: 0
+resume:
+  path: C:\Users\vegap\OneDrive\Documents\GitHub\pvega62.github.io\Pedro Vega Resume.pdf
+  must_have_skills:
+  - Docs-as-code
+  - API Documentation
+  - Markdown
+  - UX Writing
+  - Figma
+  - Content Strategy
+  keywords_weight: 1.5
+platforms:
+  greenhouse: true
+  ashby: true
+  lever: true
+  workable: true
+  aggregators: false
+export:
+  format: pdf,csv,json
+  output_dir: results

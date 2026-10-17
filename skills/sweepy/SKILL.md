@@ -1,6 +1,6 @@
 ---
 name: sweepy
-description: Run the Sweepy job search engine from this CLI. Use /sweepy to create a search profile, scrape and score jobs, review matches, and export CSV/PDF reports through Sweepy's MCP server.
+description: Use /sweepy to find jobs through Sweepy's MCP, assess roles against the user's resume with LLM judgments, review matches, and export reports.
 ---
 
 # Sweepy
@@ -32,20 +32,30 @@ Register Sweepy's MCP server in the CLI's MCP configuration:
 Replace `/path/to/sweepy` with the absolute path to the repository. Restart the CLI
 after editing the configuration.
 
-## Start a new scrape
+## Start a new LLM-assisted search
 
 1. Call `create_profile` with the candidate's name, target job titles, location, and
    resume PDF path. Optional fields (remote/hybrid preference, minimum salary,
    must-have skills) use sensible defaults when omitted.
-2. Call `run_sweep` with the saved profile path. This discovers, validates, scores,
-   and renders the report in one pass and returns the top roles and report paths.
+2. Call `run_sweep` with the saved profile path. This discovers and validates postings,
+   then generates deterministic keyword-overlap scores. It does not perform LLM
+   assessment by itself; tell the user that these initial scores are preliminary.
 
-## View the results of a scrape
+## Assess and report matches
 
-- Call `get_results` to retrieve the top matches with scores, companies, locations,
-  and playbook recommendations without re-running discovery.
-- Call `get_jobs` to inspect the full deterministic card set in the current session
-  before supplying any LLM judgment.
+- By default, do not stop at keyword scores and do not wait for the user to request the
+  LLM boost. Call `get_jobs` to inspect the available details for relevant roles.
+- Compare each assessable role with the candidate's resume and stated preferences. Submit
+  an independent `match_pct` and evidence-grounded card fields through `submit_judgments`.
+  Never copy the deterministic overlap score into `match_pct` or invent unsupported job
+  requirements. If evidence is insufficient, disclose the limitation and retain the
+  `KEYWORD OVERLAP` label for that role.
+- Call `render_report` after submitting judgments so the PDF reflects assessed matches.
+- Call `get_results` for initial sweep metadata, but treat scores labeled `KEYWORD OVERLAP`
+  as unassessed. Present `NN% MATCH` only for cards with submitted LLM judgments.
+
+Use a keyword-only scrape and report only when the user explicitly requests deterministic
+keyword results or available job evidence cannot support responsible LLM assessment.
 
 ## Export results to a CSV file
 
@@ -61,11 +71,13 @@ When MCP tools are unavailable, run the CLI from the repository root:
 python swee.py --setup                 # interactive profile wizard
 python swee.py --profile profiles/your_profile.yaml
 python swee.py --docx resume.docx      # convert a DOCX resume to PDF
+python swee.py --convert notes.md      # convert any supported document to PDF
 ```
 
 ## Notes
 
-- Sweepy works with or without an LLM. Without an LLM it produces deterministic
-  `NN% KEYWORD OVERLAP` scores; `submit_judgments` upgrades a card to an
-  LLM-supplied `NN% MATCH`.
-- The hybrid flow is `run_sweep → get_jobs → submit_judgments → render_report`.
+- `run_sweep` produces deterministic `NN% KEYWORD OVERLAP` scores; it does not invoke an
+  LLM automatically. The default MCP-assisted workflow is
+  `run_sweep → get_jobs → assess roles → submit_judgments → render_report`.
+- `submit_judgments` upgrades a card to `NN% MATCH` only when the assistant supplies an
+  independent, evidence-based assessment.
