@@ -14,14 +14,32 @@ import yaml
 from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.key_binding.key_processor import KeyPress
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.keys import Keys
 from prompt_toolkit.styles import Style as PromptStyle
 
+from engine.adapters import ADAPTERS
 from engine.documents import CONVERTIBLE_SUFFIXES, SUPPORTED_SUFFIXES, convert_to_pdf
+from engine.engine_defaults import (
+    DEFAULT_APIFY_ACTOR,
+    DEFAULT_HIREHUNT_SOURCES,
+    DEFAULT_JOBDROP_SITES,
+    DEFAULT_JOBSPY_SITES,
+    DEFAULT_OPENROLES_ATS,
+)
+from engine.engines import (
+    ENGINE_CATALOG,
+    engine_status,
+    install_command,
+    install_engines,
+    missing_engines,
+    scrapes_table,
+    status_table,
+)
 from engine.logging import recent_log_lines
+from engine.sweep_config import legacy_profile_notice, normalize_sources, validate_sources
 from engine.updater import update_sweepy
 
 log = logging.getLogger("sweepy.engine.config")
@@ -31,6 +49,29 @@ README_URL = "https://github.com/pvega62/sweepy/blob/main/README.md"
 
 _MENU_WIDTH = 62
 _LAST_PROFILE_FILE = os.path.join("profiles", ".last_profile")
+
+
+def _console_supports(text: str) -> bool:
+    """Report whether the active console encoding can render ``text``."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+        return True
+    except (LookupError, UnicodeEncodeError):
+        return False
+
+
+BACK_LABEL = "← Back" if _console_supports("←") else "< Back"
+
+
+class _GoBack(KeyboardInterrupt):
+    """Esc pressed: leave this level and return to the menu above it.
+
+    Subclasses ``KeyboardInterrupt`` so callers that only know the old cancel
+    semantics still treat it as a cancelled prompt.
+    """
+
+
 _MENU_STYLE = questionary.Style(
     [
         ("qmark", "fg:#fbbf24 bold"),
@@ -70,6 +111,8 @@ _COMMAND_HELP = [
     ("python swee.py --logs", "Print the newest log entries"),
     ("python swee.py --update", "Pull the latest code and dependencies"),
     ("python swee.py --check-update", "Report whether a newer version exists"),
+    ("python swee.py --list-engines", "Show every engine and its install status"),
+    ("python swee.py --install-engines X", "Download optional engines (all or a list)"),
 ]
 
 
@@ -189,11 +232,15 @@ def _wizard_menu_select(
             fragments.append((style, text + "\n"))
 
         line("╭" + "─" * (width - 2) + "╮", "class:frame")
-        line("│  " + "SWEEPY  /  SEARCH LAUNCHPAD".ljust(width - 4) + "│", "class:heading")
+        line("│  " + "SWEEPY  /  SEARCH LAUNCHPAD"[: width - 5].ljust(width - 4) + "│", "class:heading")
         line("├" + "─" * (width - 2) + "┤", "class:frame")
         for row in range(0, len(actions), columns):
             row_actions = actions[row : row + columns]
             row_indices = list(range(row, row + len(row_actions)))
+            # Center a lone trailing tile so an odd tile count still looks balanced.
+            lead = 0
+            if len(row_actions) == 1 and columns > 1:
+                lead = max(0, (width - 4 - card_width) // 2)
             rendered_cards = []
             for index, action in zip(row_indices, row_actions):
                 card_fragments = []
@@ -207,11 +254,11 @@ def _wizard_menu_select(
                 inner_width = card_width - 2
                 card_line("╭" + "─" * inner_width + "╮", style)
                 card_line(
-                    "│" + f" {number}  {title}"[:inner_width].ljust(inner_width) + "│",
+                    "│" + f" {number}  {title}"[: inner_width - 1].ljust(inner_width) + "│",
                     style,
                 )
                 card_line(
-                    "│" + f" {description}"[:inner_width].ljust(inner_width) + "│",
+                    "│" + f" {description}"[: inner_width - 1].ljust(inner_width) + "│",
                     style,
                 )
                 card_line("╰" + "─" * inner_width + "╯", style)
@@ -219,12 +266,14 @@ def _wizard_menu_select(
 
             for line_number in range(4):
                 fragments.append(("class:frame", "│  "))
+                if lead:
+                    fragments.append(("class:frame", " " * lead))
                 for column, card_fragments in enumerate(rendered_cards):
                     style, text = card_fragments[line_number]
                     fragments.append((style, text))
                     if column == 0 and len(rendered_cards) > 1:
                         fragments.append(("class:frame", "   "))
-                padding = width - 4 - (
+                padding = width - 4 - lead - (
                     card_width * len(rendered_cards)
                     + (3 if len(rendered_cards) > 1 else 0)
                 )
@@ -240,10 +289,15 @@ def _wizard_menu_select(
                 f"{'Ready' if resume_path else 'Resume missing'}"
             )
         else:
-            status = "Current profile: none loaded  /  Create a profile to get started"
+            status = "Current profile: none loaded  /  Build one to start"
         line("├" + "─" * (width - 2) + "┤", "class:frame")
-        line("│  " + status[: width - 4].ljust(width - 4) + "│", "class:status")
-        line("│  " + "↑ ↓ ← → navigate   Enter select   Esc exit".ljust(width - 4) + "│", "class:muted")
+        line("│  " + status[: width - 5].ljust(width - 4) + "│", "class:status")
+        line(
+            "│  "
+            + "↑ ↓ ← → navigate   Enter select   Esc exit"[: width - 5].ljust(width - 4)
+            + "│",
+            "class:muted",
+        )
         line("╰" + "─" * (width - 2) + "╯", "class:frame")
         return fragments
 
@@ -323,7 +377,8 @@ def _print_nav_help() -> None:
     for line in _boxed(["Sweepy help"]):
         _out(line)
     print("Controls")
-    print("  Ctrl+C or Esc  Cancel setup")
+    print("  Esc             Go back one level")
+    print("  Ctrl+C          Quit Sweepy")
     print("  Enter or Tab    Accept the current value and advance")
     print("  Arrow keys      Move between tiles and choices")
     print("")
@@ -342,52 +397,68 @@ def _print_nav_help() -> None:
 
 _HELP_SUBMENU_CHOICES = [
     "Command flags",
+    "Job engines",
     "Keyboard controls",
     "Documentation & links",
     "Bonus tools",
     "Recent logs",
-    "Back to main menu",
 ]
+
+
+def _print_keyboard_help() -> None:
+    print("\nKeyboard controls")
+    print("  Esc             Go back one level")
+    print("  Ctrl+C          Quit Sweepy")
+    print("  Enter or Tab    Accept the current value and advance")
+    print("  Arrow keys      Move between tiles and choices")
 
 
 def _show_help_menu() -> None:
     """Open a dedicated help submenu while preserving the direct help output fallback."""
     _print_nav_help()
-    action = _ask(_select("Which help section do you want to view?", _HELP_SUBMENU_CHOICES))
-    if action is None or action == "Back to main menu":
-        return
-    if action == "Command flags":
-        print("\nCommand flags")
-        for flag, description in _COMMAND_HELP:
-            print(f"  {flag:<32}{description}")
-        return
-    if action == "Keyboard controls":
-        print("\nKeyboard controls")
-        print("  Ctrl+C or Esc  Cancel setup")
-        print("  Enter or Tab    Accept the current value and advance")
-        print("  Arrow keys      Move between tiles and choices")
-        return
-    if action == "Documentation & links":
-        print("\nDocumentation")
-        print(f"  {_hyperlink('Sweepy documentation', DOCS_URL)}")
-        print(f"  {_hyperlink('Sweepy README', README_URL)}")
-        return
-    if action == "Bonus tools":
-        print("\nBonus tools")
-        print("  Convert a document to PDF from this menu, with or without a profile.")
-        print(f"  Accepts: {', '.join(SUPPORTED_SUFFIXES)}")
-        return
-    if action == "Recent logs":
-        _show_recent_logs()
+    while True:
+        action = _menu("Which help section do you want to view?", _HELP_SUBMENU_CHOICES)
+        if action is None:
+            return
+        if action == "Command flags":
+            print("\nCommand flags")
+            for flag, description in _COMMAND_HELP:
+                print(f"  {flag:<32}{description}")
+            continue
+        if action == "Keyboard controls":
+            _print_keyboard_help()
+            continue
+        if action == "Job engines":
+            print("\nJob engines")
+            print(status_table())
+            print("\nWhat each engine scrapes")
+            print(scrapes_table())
+            print("\n  Sweepy downloads an engine only after you confirm.")
+            print("  Choose 'Download job engines' in the toolbox to install or inspect one.")
+            print("  openroles needs company slugs; apify needs APIFY_TOKEN; hirehunt has no proxies.")
+            print("  A failing engine is skipped after 5 consecutive failures for 30 seconds.")
+            continue
+        if action == "Documentation & links":
+            print("\nDocumentation")
+            print(f"  {_hyperlink('Sweepy documentation', DOCS_URL)}")
+            print(f"  {_hyperlink('Sweepy README', README_URL)}")
+            continue
+        if action == "Bonus tools":
+            print("\nBonus tools")
+            print("  Convert a document to PDF from this menu, with or without a profile.")
+            print(f"  Accepts: {', '.join(SUPPORTED_SUFFIXES)}")
+            continue
+        if action == "Recent logs":
+            _show_recent_logs()
 
 
 def _ask(question):
-    """Add consistent wizard-level cancel and advance keys to a questionary prompt."""
+    """Add consistent wizard-level navigation keys to a questionary prompt."""
     bindings = KeyBindings()
 
     @bindings.add(Keys.Escape)
-    def cancel_setup(event):
-        event.app.exit(exception=KeyboardInterrupt)
+    def go_back(event):
+        event.app.exit(exception=_GoBack())
 
     @bindings.add(Keys.Tab, eager=True)
     def advance_field(event):
@@ -397,6 +468,41 @@ def _ask(question):
         [question.application.key_bindings, bindings]
     )
     return question.unsafe_ask()
+
+
+def _menu(message: str, choices: List[str]) -> Optional[str]:
+    """Show a submenu whose first entry goes back one level.
+
+    Returns ``None`` when the user picks Back or presses Esc, so every caller can
+    treat "go up" the same way.
+    """
+    try:
+        choice = _ask(_select(message, [BACK_LABEL, *choices]))
+    except _GoBack:
+        return None
+    return None if choice == BACK_LABEL else choice
+
+
+def _run_action(action: Callable[[], None]) -> None:
+    """Run a menu action whose internal prompts may be backed out of with Esc."""
+    try:
+        action()
+    except _GoBack:
+        return
+
+
+def _edit_with_back(editor, profile_data: Dict) -> bool:
+    """Run a profile editor and report whether the profile actually changed.
+
+    Esc inside an editor returns to the menu that launched it. Values already
+    accepted before the Esc still count, so the exit prompt can offer to save.
+    """
+    before = copy.deepcopy(profile_data)
+    try:
+        changed = editor(profile_data)
+    except _GoBack:
+        changed = False
+    return bool(changed) or profile_data != before
 
 
 def _show_recent_logs() -> None:
@@ -747,6 +853,468 @@ def _ask_debug(current=None):
     )
 
 
+_JOBDROP_BOARDS = [
+    "linkedin",
+    "indeed",
+    "glassdoor",
+    "google",
+    "zip_recruiter",
+    "wellfound",
+    "hiring_cafe",
+    "trueup",
+    "remoteok",
+    "weworkremotely",
+    "builtin",
+    "dice",
+]
+
+
+def _engine_status_label(name: str) -> str:
+    status = engine_status(name)
+    if status["core"]:
+        return "built in"
+    return "installed" if status["installed"] else "download"
+
+
+def _engine_choice_label(name: str) -> str:
+    info = ENGINE_CATALOG[name]
+    adapter = ADAPTERS[name]
+    caps = [
+        label
+        for flag, label in (
+            ("supports_proxies", "proxies"),
+            ("supports_user_agent", "User-Agent"),
+            ("supports_description_toggle", "descriptions"),
+        )
+        if getattr(adapter, flag)
+    ]
+    capability_text = ", ".join(caps) or "basic"
+    return f"{name:<9} [{_engine_status_label(name):<9}] {info.blurb} ({capability_text})"
+
+
+def _engine_details(name: str) -> str:
+    info = ENGINE_CATALOG[name]
+    status = engine_status(name)
+    lines = [
+        f"{name} - {info.blurb}",
+        f"  Status:     {'installed' if status['installed'] else 'not installed'}",
+        f"  Package:    {info.package or 'built in'}",
+        f"  Region:     {info.regions or 'global'}",
+        f"  Scrapes:    {', '.join(info.scrapes)}",
+    ]
+    if info.needs:
+        lines.append(f"  Requires:   {', '.join(info.needs)}")
+    if info.notes:
+        lines.append(f"  Note:       {info.notes}")
+    return "\n".join(lines)
+
+
+def _ensure_engine_available(name: str) -> bool:
+    """Offer to install a missing engine before its prompts run."""
+    if engine_status(name)["installed"]:
+        return True
+    download = _ask(
+        questionary.confirm(
+            f"{name} is not installed. Download it now with pip?", default=True
+        )
+    )
+    if not download:
+        log.info("Skipped %s. Install it later with: %s", name, install_command([name]))
+        return False
+
+    result = install_engines([name], echo=print).get(name, {})
+    if not result.get("installed"):
+        log.warning("Could not install %s: %s", name, result.get("detail", "unknown error"))
+        log.info("Retry with: %s", result.get("command") or install_command([name]))
+        return False
+    log.info("%s installed.", name)
+    return True
+
+
+def _ask_proxies(current=None) -> List[str]:
+    """Collect proxies from a file or an inline entry without echoing credentials."""
+    existing = list(current or [])
+    if existing and _ask(
+        questionary.confirm(f"Keep your {len(existing)} configured proxy target(s)?", default=True)
+    ):
+        return existing
+    if not _ask(questionary.confirm("Route requests through proxies?", default=False)):
+        return []
+
+    if _ask(questionary.confirm("Load proxies from a file?", default=True)):
+        path = (_ask(questionary.text("Proxy file path:", default="./proxies.txt")) or "").strip()
+        if not path:
+            return []
+        try:
+            with open(os.path.expanduser(path), encoding="utf-8") as handle:
+                proxies = [line.strip() for line in handle if line.strip()]
+        except OSError as exc:
+            log.warning("Could not read the proxy file: %s", exc)
+            return []
+        log.info("Loaded %d proxy target(s). Contents stay hidden.", len(proxies))
+        return proxies
+
+    host = (_ask(questionary.text("Proxy host:port:")) or "").strip()
+    if not host:
+        return []
+    if "@" not in host:
+        user = (_ask(questionary.text("Proxy username (leave blank if none):")) or "").strip()
+        if user:
+            password = _ask(questionary.password("Proxy password:")) or ""
+            host = f"{user}:{password}@{host}"
+    return [host]
+
+
+def _ask_jobspy(current=None) -> dict:
+    current = current or {}
+    selected = set(current.get("sites") or DEFAULT_JOBSPY_SITES)
+    sites = _ask(
+        questionary.checkbox(
+            "JobSpy boards:",
+            choices=[
+                questionary.Choice(board.title(), value=board, checked=board in selected)
+                for board in DEFAULT_JOBSPY_SITES
+            ],
+        )
+    ) or list(DEFAULT_JOBSPY_SITES)
+    descriptions = _ask(
+        questionary.confirm(
+            "Fetch full descriptions? (Slower, but scores need the posting text)",
+            default=bool(current.get("fetch_descriptions", True)),
+        )
+    )
+    user_agent = (
+        _ask(
+            questionary.text(
+                "User-Agent override (leave blank for the built-in Chrome string):",
+                default=str(current.get("user_agent") or ""),
+            )
+        )
+        or ""
+    ).strip()
+    return {
+        "sites": sites,
+        "fetch_descriptions": bool(descriptions),
+        "proxies": _ask_proxies(current.get("proxies")),
+        "user_agent": user_agent or None,
+        "results_per_title": current.get("results_per_title", 25),
+    }
+
+
+def _ask_hirehunt(current=None) -> dict:
+    current = current or {}
+    selected = set(current.get("sources") or DEFAULT_HIREHUNT_SOURCES)
+    sources = _ask(
+        questionary.checkbox(
+            "HireHunt sources:",
+            choices=[
+                questionary.Choice(source.replace("_", " ").title(), value=source, checked=source in selected)
+                for source in DEFAULT_HIREHUNT_SOURCES
+            ],
+        )
+    ) or list(DEFAULT_HIREHUNT_SOURCES)
+    log.info("HireHunt has no proxy hook, so proxy settings stay disabled.")
+    return {"sources": sources}
+
+
+def _ask_jobdrop(current=None) -> dict:
+    current = current or {}
+    selected = set(current.get("sites") or DEFAULT_JOBDROP_SITES)
+    sites = _ask(
+        questionary.checkbox(
+            "jobdrop boards:",
+            choices=[
+                questionary.Choice(board.replace("_", " ").title(), value=board, checked=board in selected)
+                for board in _JOBDROP_BOARDS
+            ],
+        )
+    ) or list(DEFAULT_JOBDROP_SITES)
+    headless = _ask(
+        questionary.confirm("Run browser-backed boards headless?", default=bool(current.get("headless", True)))
+    )
+    descriptions = _ask(
+        questionary.confirm(
+            "Fetch full descriptions?",
+            default=bool(current.get("fetch_descriptions", True)),
+        )
+    )
+    return {
+        "sites": sites,
+        "headless": bool(headless),
+        "fetch_descriptions": bool(descriptions),
+        "proxies": _ask_proxies(current.get("proxies")),
+    }
+
+
+def _ask_openroles(current=None) -> dict:
+    current = current or {}
+    selected = set(current.get("ats") or DEFAULT_OPENROLES_ATS)
+    ats = _ask(
+        questionary.checkbox(
+            "ATS platforms:",
+            choices=[
+                questionary.Choice(name.title(), value=name, checked=name in selected)
+                for name in DEFAULT_OPENROLES_ATS
+            ],
+        )
+    ) or list(DEFAULT_OPENROLES_ATS)
+
+    companies: List[str] = []
+    while not companies:
+        raw = _ask(
+            questionary.text(
+                "Company slugs, comma-separated (example: figma, stripe, notion):",
+                default=", ".join(current.get("companies") or []),
+            )
+        ) or ""
+        companies = [company.strip() for company in raw.split(",") if company.strip()]
+        if not companies:
+            log.warning("openroles reads boards you name, so at least one company slug is required.")
+    return {"ats": ats, "companies": companies}
+
+
+def _ask_apify(current=None) -> Optional[dict]:
+    current = current or {}
+    token = os.environ.get("APIFY_TOKEN") or current.get("token")
+    if not token:
+        log.warning("APIFY_TOKEN is not set. Add it to the environment, then enable apify again.")
+        return None
+    actor = (
+        _ask(
+            questionary.text(
+                "Apify actor id:",
+                default=str(current.get("actor") or DEFAULT_APIFY_ACTOR),
+            )
+        )
+        or DEFAULT_APIFY_ACTOR
+    ).strip()
+    return {"token": None, "actor": actor or DEFAULT_APIFY_ACTOR}
+
+
+_ENGINE_PROMPTS = {
+    "jobspy": _ask_jobspy,
+    "hirehunt": _ask_hirehunt,
+    "jobdrop": _ask_jobdrop,
+    "openroles": _ask_openroles,
+    "apify": _ask_apify,
+}
+
+
+def _ask_engines(current: Optional[dict] = None) -> Optional[dict]:
+    """Pick engines, download any that are missing, then collect their settings.
+
+    Returns ``None`` when the user backs out, so the caller keeps the previous config.
+    """
+    current = current or {}
+    try:
+        enabled = list(current.get("enabled") or ["jobspy", "ats"])
+        selected = _ask(
+            questionary.checkbox(
+                "Which job engines should Sweepy use? Missing engines download on selection.",
+                choices=[
+                    questionary.Choice(
+                        _engine_choice_label(name), value=name, checked=name in enabled
+                    )
+                    for name in ENGINE_CATALOG
+                ],
+            )
+        )
+        if not selected:
+            log.warning("Keep at least one engine, otherwise a sweep finds nothing.")
+
+        keep: List[str] = []
+        config: dict = {"enabled": keep}
+        for name in selected or []:
+            if not _ensure_engine_available(name):
+                continue
+            prompt = _ENGINE_PROMPTS.get(name)
+            if prompt is None:
+                keep.append(name)
+                continue
+            try:
+                engine_config = prompt(dict(current.get(name) or {}))
+            except ValueError as exc:
+                log.warning("%s settings rejected: %s", name, exc)
+                continue
+            if engine_config is None:
+                log.warning("%s stays disabled.", name)
+                continue
+            keep.append(name)
+            config[name] = engine_config
+    except _GoBack:
+        return None
+
+    errors = validate_sources({name: config.get(name, {}) for name in keep})
+    for error in errors:
+        log.warning("Configuration needs attention: %s", error)
+    return config
+
+
+def _ask_orchestrator(current=None) -> Optional[dict]:
+    """Collect timeout, cache, and circuit-breaker settings. Returns None on Back."""
+    current = current or {}
+    cache = dict(current.get("cache") or {})
+    breaker = dict(current.get("circuit_breaker") or {})
+
+    def _ask_int(prompt: str, default: int) -> int:
+        raw = _ask(questionary.text(prompt, default=str(default)))
+        return _parse_int(raw or "") or default
+
+    try:
+        timeout = _ask_int(
+            "Per-source timeout in seconds:", int(current.get("timeout_per_source_seconds", 180))
+        )
+        cache_enabled = _ask(
+            questionary.confirm(
+                "Cache discovery results between runs?", default=bool(cache.get("enabled", True))
+            )
+        )
+        ttl = _ask_int("Cache lifetime in seconds:", int(cache.get("ttl_seconds", 3600)))
+        threshold = _ask_int(
+            "Skip an engine after this many consecutive failures:",
+            int(breaker.get("failure_threshold", 5)),
+        )
+        cooldown = _ask_int(
+            "Cooldown before retrying a skipped engine (seconds):",
+            int(breaker.get("cooldown_seconds", 30)),
+        )
+    except _GoBack:
+        return None
+    return {
+        "timeout_per_source_seconds": max(1, timeout),
+        "cache": {"enabled": bool(cache_enabled), "ttl_seconds": max(0, ttl)},
+        "circuit_breaker": {
+            "failure_threshold": max(1, threshold),
+            "cooldown_seconds": max(1, cooldown),
+        },
+    }
+
+
+def _manage_engines() -> None:
+    """Show what each engine scrapes and install missing libraries on request."""
+
+    def _report(results: dict) -> None:
+        for name, result in results.items():
+            if result.get("installed"):
+                log.info("%s installed.", name)
+            else:
+                log.warning("Could not install %s: %s", name, result.get("detail"))
+                log.info("Retry with: %s", result.get("command") or install_command([name]))
+
+    def apply_choice(action: str) -> None:
+        if action == "Install all missing engines":
+            targets = missing_engines()
+            if not targets:
+                log.info("Every engine is already installed.")
+                return
+            if not _ask(
+                questionary.confirm(
+                    f"Download {len(targets)} engine(s): {', '.join(targets)}?", default=True
+                )
+            ):
+                return
+            _report(install_engines(targets, echo=print))
+            return
+
+        if action == "Install one engine":
+            targets = missing_engines()
+            if not targets:
+                log.info("Every engine is already installed.")
+                return
+            name = _menu("Which engine do you want to download?", targets)
+            if name is None:
+                return
+            if not _ask(questionary.confirm(f"Download {name} with pip now?", default=True)):
+                log.info("Run this later: %s", install_command([name]))
+                return
+            _report(install_engines([name], echo=print))
+            return
+
+        if action == "Show engine details":
+            name = _menu("Which engine?", list(ENGINE_CATALOG))
+            if name is None:
+                return
+            print("")
+            print(_engine_details(name))
+
+    while True:
+        print("\nJob engines")
+        print(status_table())
+        print("\nWhat each engine scrapes")
+        print(scrapes_table())
+        print("")
+        action = _menu(
+            "Engine downloads:",
+            [
+                "Install all missing engines",
+                "Install one engine",
+                "Show engine details",
+            ],
+        )
+        if action is None:
+            return
+        try:
+            apply_choice(action)
+        except _GoBack:
+            continue
+
+
+def _edit_sources(profile_data: Dict) -> bool:
+    """Edit engines, settings, and downloads without running the whole questionnaire."""
+    changed = False
+    while True:
+        runtime = normalize_sources(profile_data)
+        log.info("  Engines: %s", ", ".join(runtime["enabled"]) or "(none)")
+        action = _menu(
+            "Job engines",
+            [
+                "Choose engines and settings",
+                "Download a job engine",
+                "Show what each engine scrapes",
+            ],
+        )
+        if action is None:
+            return changed
+        if action == "Download a job engine":
+            _manage_engines()
+            continue
+        if action == "Show what each engine scrapes":
+            for name in ENGINE_CATALOG:
+                print(_engine_details(name))
+                print("")
+            continue
+
+        current = _answers_from_profile(profile_data).get("sources") or {}
+        answers = _ask_engines(current)
+        if answers is None:
+            continue
+        _apply_sources(profile_data, answers)
+        changed = True
+        log.info("Engines updated: %s", ", ".join(answers.get("enabled") or []) or "(none)")
+
+
+def _apply_sources(profile_data: Dict, answers: Optional[dict]) -> None:
+    if not answers:
+        return
+    sources = dict(profile_data.get("sources") or {})
+    sources["enabled"] = list(answers.get("enabled") or [])
+    for name, config in answers.items():
+        if name == "enabled":
+            continue
+        sources[name] = config
+    profile_data["sources"] = sources
+
+
+def _apply_orchestrator(profile_data: Dict, answers: Optional[dict]) -> None:
+    if not answers:
+        return
+    profile_data["cache"] = dict(answers.get("cache") or {})
+    profile_data["orchestrator"] = {
+        "timeout_per_source_seconds": answers.get("timeout_per_source_seconds", 180),
+        "circuit_breaker": dict(answers.get("circuit_breaker") or {}),
+    }
+
+
 def _build_steps():
     return [
         _Step("name", "Your name", _ask_name),
@@ -766,10 +1334,22 @@ def _build_steps():
 
 
 def _collect(steps, seed=None):
+    """Ask every step in order; Esc walks back one question, then out of the flow."""
     answers = {}
-    for step in steps:
+    index = 0
+    while index < len(steps):
+        step = steps[index]
         current = (seed or {}).get(step.key)
-        answers[step.key] = step.ask(current)
+        if current is None:
+            current = answers.get(step.key)
+        try:
+            answers[step.key] = step.ask(current)
+        except _GoBack:
+            if index == 0:
+                raise
+            index -= 1
+            continue
+        index += 1
     return answers
 
 
@@ -794,7 +1374,25 @@ def _print_summary(answers, steps):
     log.info("Review your answers before submitting:")
     for step in steps:
         log.info("  %s: %s", step.label, _format_answer(step, answers.get(step.key)))
+    log.info("  Job engines: %s", _format_engines(answers.get("sources")))
+    log.info("  Engine performance: %s", _format_orchestrator(answers.get("orchestrator")))
     log.info("──────────────────────────────────────────────────")
+
+
+def _format_engines(value) -> str:
+    enabled = (value or {}).get("enabled") or []
+    return ", ".join(enabled) if enabled else "(defaults: jobspy, ats)"
+
+
+def _format_orchestrator(value) -> str:
+    if not value:
+        return "(defaults: 180s timeout, cache on)"
+    cache = value.get("cache") or {}
+    state = "on" if cache.get("enabled", True) else "off"
+    return (
+        f"timeout {value.get('timeout_per_source_seconds', 180)}s, "
+        f"cache {state} ({cache.get('ttl_seconds', 3600)}s)"
+    )
 
 
 _PLATFORM_KEYS = ("greenhouse", "ashby", "lever", "workable", "aggregators")
@@ -831,6 +1429,10 @@ def _answers_from_profile(profile_data: Dict) -> Dict:
     export = profile_data.get("export") or {}
     formats = [f.strip() for f in str(export.get("format", "pdf,csv")).split(",") if f.strip()]
     enabled = [key for key in _PLATFORM_KEYS if platforms.get(key)]
+    runtime = normalize_sources(profile_data)
+    engine_answers = {"enabled": list(runtime["enabled"])}
+    for name in ("jobspy", "hirehunt", "openroles", "jobdrop", "apify"):
+        engine_answers[name] = copy.deepcopy(runtime["engines"][name])
     return {
         "name": profile_data.get("name", ""),
         "titles": list(search.get("titles") or []),
@@ -841,6 +1443,12 @@ def _answers_from_profile(profile_data: Dict) -> Dict:
         "min_salary": search.get("min_salary", 0),
         "platforms": enabled,
         "custom_platforms": [dict(c) for c in (platforms.get("custom") or [])],
+        "sources": engine_answers,
+        "orchestrator": {
+            "timeout_per_source_seconds": runtime["orchestrator"]["timeout_per_source_seconds"],
+            "cache": dict(runtime["cache"]),
+            "circuit_breaker": dict(runtime["orchestrator"]["circuit_breaker"]),
+        },
         "must_have_skills": list(resume.get("must_have_skills") or []),
         "formats": formats,
         "tracks": [dict(t) for t in (resume.get("tracks") or [])],
@@ -888,6 +1496,11 @@ def _merge_answers(profile_data: Dict, answers: Dict) -> Dict:
         platforms.pop("custom", None)
     merged["platforms"] = platforms
 
+    if answers.get("sources_dirty"):
+        _apply_sources(merged, answers.get("sources"))
+    if answers.get("orchestrator_dirty"):
+        _apply_orchestrator(merged, answers.get("orchestrator"))
+
     report = dict(merged.get("report") or {})
     report.setdefault("style", "cards")
     report.setdefault("cards_per_page", 4)
@@ -921,6 +1534,8 @@ MENU_EDIT = "Edit an existing profile"
 MENU_DEBUG = "Toggle debug logging"
 MENU_SCALING = "Adjust scoring and scaling"
 MENU_AGGREGATORS = "Add or edit aggregators"
+MENU_SOURCES = "Manage job engines"
+MENU_ENGINES = "Download job engines"
 MENU_HELP = "Show help"
 MENU_LOGS = "Show recent logs"
 MENU_CONVERT = "Convert a document to PDF (bonus)"
@@ -932,8 +1547,9 @@ _MENU_TILES = [
     ("01", "LAUNCH SWEEP", "Search enabled sources", MENU_RUN),
     ("02", "BUILD PROFILE", "Set up a new job search", MENU_CREATE),
     ("03", "LOAD PROFILE", "Choose a saved job search", MENU_LOAD),
-    ("04", "TUNE SEARCH", "Scoring, limits and reports", MENU_SCALING),
-    ("05", "OPEN TOOLBOX", "Profile edits, sources and more", MENU_TOOLBOX),
+    ("04", "TUNE SEARCH", "Scoring and reports", MENU_SCALING),
+    ("05", "OPEN TOOLBOX", "Edits, tools and settings", MENU_TOOLBOX),
+    ("06", "EXIT SWEEPY", "Save changes and close", MENU_EXIT),
 ]
 
 _SCALING_CHOICES = [
@@ -941,7 +1557,6 @@ _SCALING_CHOICES = [
     "Maximum cards (report.max_cards)",
     "Cards per page (report.cards_per_page)",
     "Report style (report.style)",
-    "Back to main menu",
 ]
 
 _AGGREGATOR_CHOICES = [
@@ -949,13 +1564,14 @@ _AGGREGATOR_CHOICES = [
     "Add a custom aggregator",
     "Edit a custom aggregator",
     "Remove a custom aggregator",
-    "Back to main menu",
 ]
 
 
 def _toolbox_choices() -> List[str]:
     return [
         MENU_EDIT,
+        MENU_SOURCES,
+        MENU_ENGINES,
         MENU_AGGREGATORS,
         MENU_DEBUG,
         MENU_HELP,
@@ -963,7 +1579,6 @@ def _toolbox_choices() -> List[str]:
         MENU_CONVERT,
         MENU_UPDATE,
         MENU_EXIT,
-        "Back to launchpad",
     ]
 
 
@@ -1032,49 +1647,108 @@ def _run_loaded_profile(
     run_sweep(profile_data, working_path)
 
 
-def _review_answers(answers: Dict, steps, reload_answers, submit_label: str = "Submit profile") -> None:
+def _review_answers(
+    answers: Dict,
+    steps,
+    reload_answers,
+    submit_label: str = "Submit profile",
+    defaults: Optional[Dict] = None,
+) -> None:
     """Show the answer summary and return once the user submits."""
+    defaults = defaults or {}
     while True:
         _print_summary(answers, steps)
-        action = _ask(
-            _select(
-                "What would you like to do?",
-                [
-                    submit_label,
-                    "Edit an answer",
-                    MENU_CONVERT,
-                    "Show help",
-                    "Show recent logs",
-                    "Start over",
-                ],
-            )
+        action = _menu(
+            "What would you like to do?",
+            [
+                submit_label,
+                "Edit an answer",
+                MENU_SOURCES,
+                "Adjust engine performance",
+                MENU_ENGINES,
+                MENU_CONVERT,
+                "Show help",
+                "Show recent logs",
+                "Start over",
+            ],
         )
-        if action is None or action == submit_label:
+        if action == submit_label:
             return
+        if action is None:
+            if not steps:
+                return
+            _reopen_last_step(answers, steps)
+            continue
         if action == "Start over":
-            answers.clear()
-            answers.update(reload_answers())
+            try:
+                answers.clear()
+                answers.update(reload_answers())
+            except _GoBack:
+                return
+            continue
+        if action == MENU_ENGINES:
+            _run_action(_manage_engines)
+            continue
+        if action == MENU_SOURCES:
+            current = answers.get("sources") or _engine_defaults(defaults)
+            edited = _ask_engines(current)
+            if edited is not None:
+                answers["sources"] = edited
+                answers["sources_dirty"] = True
+            continue
+        if action == "Adjust engine performance":
+            current = answers.get("orchestrator") or _orchestrator_defaults(defaults)
+            edited = _ask_orchestrator(current)
+            if edited is not None:
+                answers["orchestrator"] = edited
+                answers["orchestrator_dirty"] = True
             continue
         if action == "Show help":
-            _show_help_menu()
+            _run_action(_show_help_menu)
             continue
         if action == "Show recent logs":
-            _show_recent_logs()
+            _run_action(_show_recent_logs)
             continue
         if action == MENU_CONVERT:
-            _ask_convert_document()
+            _run_action(_ask_convert_document)
             continue
 
-        label = _ask(
-            _select(
-                "Which answer do you want to edit?",
-                [step.label for step in steps],
-            )
+        label = _menu(
+            "Which answer do you want to edit?",
+            [step.label for step in steps],
         )
         if label is None:
             continue
         step = next(s for s in steps if s.label == label)
+        try:
+            answers[step.key] = step.ask(answers.get(step.key))
+        except _GoBack:
+            continue
+
+
+def _reopen_last_step(answers: Dict, steps) -> None:
+    """Back from the review screen reopens the last question instead of losing answers."""
+    if not steps:
+        return
+    step = steps[-1]
+    try:
         answers[step.key] = step.ask(answers.get(step.key))
+    except _GoBack:
+        return
+
+
+def _engine_defaults(profile_data: Optional[Dict]) -> Dict:
+    if not profile_data:
+        return {}
+    answers = _answers_from_profile(profile_data)
+    return answers.get("sources") or {}
+
+
+def _orchestrator_defaults(profile_data: Optional[Dict]) -> Dict:
+    if not profile_data:
+        return {}
+    answers = _answers_from_profile(profile_data)
+    return answers.get("orchestrator") or {}
 
 
 def _save_profile_flow(profile_data: Dict, source_path: Optional[str] = None) -> Optional[str]:
@@ -1082,57 +1756,73 @@ def _save_profile_flow(profile_data: Dict, source_path: Optional[str] = None) ->
     if not source_path:
         return save_profile(profile_data, _profile_path(profile_data))
 
-    action = _ask(
-        _select(
-            "How do you want to save this profile?",
-            [f"Overwrite {source_path}", "Save as a new file"],
+    try:
+        action = _ask(
+            _select(
+                "How do you want to save this profile?",
+                [f"Overwrite {source_path}", "Save as a new file"],
+            )
         )
-    )
-    if action is None:
-        return None
-    if action.startswith("Overwrite"):
-        return save_profile(profile_data, source_path)
+        if action is None:
+            return None
+        if action.startswith("Overwrite"):
+            return save_profile(profile_data, source_path)
 
-    default_path = _profile_path(profile_data)
-    raw = _ask(
-        questionary.text(
-            "Save as (leave blank for the default path):", default=default_path
+        default_path = _profile_path(profile_data)
+        raw = _ask(
+            questionary.text(
+                "Save as (leave blank for the default path):", default=default_path
+            )
         )
-    )
+    except _GoBack:
+        return None
     return save_profile(profile_data, (raw or "").strip() or default_path)
 
 
-def _create_profile_flow() -> Tuple[str, Dict]:
+def _create_profile_flow() -> Optional[Tuple[str, Dict]]:
     steps = _build_steps()
-    answers = _collect(steps)
-    _review_answers(answers, steps, lambda: _collect(steps))
+    try:
+        answers = _collect(steps)
+        _review_answers(answers, steps, lambda: _collect(steps))
+    except _GoBack:
+        return None
     profile_data = _build_profile(answers)
     return save_profile(profile_data, _profile_path(profile_data)), profile_data
 
 
 def _load_profile_flow(profile_path: Optional[str] = None) -> Optional[Tuple[str, Dict]]:
-    if profile_path is not None and not os.path.exists(profile_path):
-        log.warning("Profile not found: %s", profile_path)
-        profile_path = None
+    try:
+        if profile_path is not None and not os.path.exists(profile_path):
+            log.warning("Profile not found: %s", profile_path)
+            profile_path = None
 
-    if profile_path is None:
-        choices = _list_profiles()
-        if not choices:
-            log.warning("No profiles found in profiles/. Create a new profile first.")
-            return None
-        profile_path = _ask(
-            _select("Which profile do you want to edit?", choices)
-        )
         if profile_path is None:
-            return None
+            choices = _list_profiles()
+            if not choices:
+                log.warning("No profiles found in profiles/. Create a new profile first.")
+                return None
+            profile_path = _menu("Which profile do you want to edit?", choices)
+            if profile_path is None:
+                return None
 
-    profile_data = load_config(profile_path)
-    steps = _build_steps()
-    seed = _answers_from_profile(profile_data)
-    answers = dict(seed)
-    _review_answers(answers, steps, lambda: dict(seed), submit_label="Submit changes")
-    merged = _merge_answers(profile_data, answers)
-    saved_path = _save_profile_flow(merged, profile_path)
+        profile_data = load_config(profile_path)
+        notice = legacy_profile_notice(profile_data)
+        if notice:
+            log.info(notice)
+        steps = _build_steps()
+        seed = _answers_from_profile(profile_data)
+        answers = dict(seed)
+        _review_answers(
+            answers,
+            steps,
+            lambda: dict(seed),
+            submit_label="Submit changes",
+            defaults=profile_data,
+        )
+        merged = _merge_answers(profile_data, answers)
+    except _GoBack:
+        return None
+    saved_path = _save_profile_flow(merged, profile_path) or profile_path
     return saved_path, merged
 
 
@@ -1143,12 +1833,17 @@ def _load_saved_profile_flow() -> Optional[Tuple[str, Dict]]:
         log.warning("No profiles found in profiles/. Create a new profile first.")
         return None
 
-    profile_path = _ask(_select("Which profile do you want to load?", choices))
+    profile_path = _menu(
+        "Which profile do you want to load?", choices
+    )
     if profile_path is None:
         return None
 
     profile_data = load_config(profile_path)
     record_last_profile(profile_path)
+    notice = legacy_profile_notice(profile_data)
+    if notice:
+        log.info(notice)
     return profile_path, profile_data
 
 
@@ -1158,22 +1853,8 @@ def _edit_scaling(profile_data: Dict) -> bool:
     report = profile_data.setdefault("report", {})
     changed = False
 
-    while True:
-        log.info(
-            "  Keyword weight %s | Max cards %s | Cards per page %s | Report style %s",
-            resume.get("keywords_weight", 1.5),
-            report.get("max_cards", 24),
-            report.get("cards_per_page", 4),
-            report.get("style", "cards"),
-        )
-        action = _ask(
-            _select(
-                "Which scaling setting do you want to change?", _SCALING_CHOICES
-            )
-        )
-        if action is None or action == "Back to main menu":
-            return changed
-
+    def apply_choice(action: str) -> None:
+        nonlocal changed
         if action.startswith("Keyword weight"):
             while True:
                 raw = _ask(
@@ -1186,9 +1867,9 @@ def _edit_scaling(profile_data: Dict) -> bool:
                 if value is not None and value >= 0:
                     resume["keywords_weight"] = value
                     changed = True
-                    break
+                    return
                 log.warning("Enter a number 0 or higher, such as 1.5.")
-        elif action.startswith("Maximum cards"):
+        if action.startswith("Maximum cards"):
             while True:
                 raw = _ask(
                     questionary.text(
@@ -1200,9 +1881,9 @@ def _edit_scaling(profile_data: Dict) -> bool:
                 if value is not None and value >= 0:
                     report["max_cards"] = value
                     changed = True
-                    break
+                    return
                 log.warning("Enter a whole number 0 or higher. 0 means unlimited.")
-        elif action.startswith("Cards per page"):
+        if action.startswith("Cards per page"):
             while True:
                 raw = _ask(
                     questionary.text(
@@ -1214,9 +1895,9 @@ def _edit_scaling(profile_data: Dict) -> bool:
                 if value is not None and value >= 1:
                     report["cards_per_page"] = value
                     changed = True
-                    break
+                    return
                 log.warning("Enter a whole number 1 or higher.")
-        elif action.startswith("Report style"):
+        if action.startswith("Report style"):
             style = _ask(
                 _select(
                     "Report style:",
@@ -1228,26 +1909,33 @@ def _edit_scaling(profile_data: Dict) -> bool:
                 report["style"] = style
                 changed = True
 
+    while True:
+        log.info(
+            "  Keyword weight %s | Max cards %s | Cards per page %s | Report style %s",
+            resume.get("keywords_weight", 1.5),
+            report.get("max_cards", 24),
+            report.get("cards_per_page", 4),
+            report.get("style", "cards"),
+        )
+        action = _menu(
+            "Which scaling setting do you want to change?", _SCALING_CHOICES
+        )
+        if action is None:
+            return changed
+        try:
+            apply_choice(action)
+        except _GoBack:
+            continue
+
 
 def _edit_aggregators(profile_data: Dict) -> bool:
     """Toggle aggregator feeds and manage the custom aggregator list in place."""
     platforms = profile_data.setdefault("platforms", {})
     changed = False
 
-    while True:
+    def apply_choice(action: str) -> None:
+        nonlocal changed
         custom = platforms.get("custom") or []
-        log.info(
-            "  Aggregator feeds: %s | Custom aggregators: %s",
-            "on" if platforms.get("aggregators") else "off",
-            ", ".join(_custom_label(c) for c in custom) if custom else "(none)",
-        )
-        action = _ask(
-            _select(
-                "Which aggregator change do you want to make?", _AGGREGATOR_CHOICES
-            )
-        )
-        if action is None or action == "Back to main menu":
-            return changed
 
         if action == "Toggle aggregator feeds":
             platforms["aggregators"] = not bool(platforms.get("aggregators"))
@@ -1256,23 +1944,27 @@ def _edit_aggregators(profile_data: Dict) -> bool:
                 "Aggregator feeds turned %s.",
                 "on" if platforms["aggregators"] else "off",
             )
-        elif action == "Add a custom aggregator":
+            return
+
+        if action == "Add a custom aggregator":
             name = (_ask(questionary.text("Aggregator name (e.g. SmartRecruiters):")) or "").strip()
             domain = (
                 _ask(questionary.text("Aggregator domain (e.g. smartrecruiters.com):")) or ""
             ).strip().lower()
             if not name or not domain:
                 log.warning("Both a name and a domain are required.")
-                continue
-            custom = [c for c in custom if c.get("name") != name]
-            custom.append({"name": name, "domain": domain, "enabled": True})
-            platforms["custom"] = custom
+                return
+            updated = [c for c in custom if c.get("name") != name]
+            updated.append({"name": name, "domain": domain, "enabled": True})
+            platforms["custom"] = updated
             changed = True
             log.info("Added %s.", name)
-        elif action == "Edit a custom aggregator":
+            return
+
+        if action == "Edit a custom aggregator":
             if not custom:
                 log.warning("No custom aggregators yet. Add one first.")
-                continue
+                return
             label = _ask(
                 _select(
                     "Which aggregator do you want to edit?",
@@ -1280,10 +1972,10 @@ def _edit_aggregators(profile_data: Dict) -> bool:
                 )
             )
             if label is None:
-                continue
+                return
             entry = next((c for c in custom if _custom_label(c) == label), None)
             if entry is None:
-                continue
+                return
             name = (
                 _ask(
                     questionary.text(
@@ -1307,14 +1999,16 @@ def _edit_aggregators(profile_data: Dict) -> bool:
             )
             if not name or not domain:
                 log.warning("Both a name and a domain are required.")
-                continue
+                return
             entry.update({"name": name, "domain": domain, "enabled": bool(enabled)})
             changed = True
             log.info("Updated %s.", name)
-        elif action == "Remove a custom aggregator":
+            return
+
+        if action == "Remove a custom aggregator":
             if not custom:
                 log.warning("No custom aggregators to remove.")
-                continue
+                return
             label = _ask(
                 _select(
                     "Which aggregator do you want to remove?",
@@ -1322,16 +2016,88 @@ def _edit_aggregators(profile_data: Dict) -> bool:
                 )
             )
             if label is None:
-                continue
+                return
             remaining = [c for c in custom if _custom_label(c) != label]
             if len(remaining) == len(custom):
-                continue
+                return
             if remaining:
                 platforms["custom"] = remaining
             else:
                 platforms.pop("custom", None)
             changed = True
             log.info("Removed %s.", label)
+
+    while True:
+        custom = platforms.get("custom") or []
+        log.info(
+            "  Aggregator feeds: %s | Custom aggregators: %s",
+            "on" if platforms.get("aggregators") else "off",
+            ", ".join(_custom_label(c) for c in custom) if custom else "(none)",
+        )
+        action = _menu(
+            "Which aggregator change do you want to make?", _AGGREGATOR_CHOICES
+        )
+        if action is None:
+            return changed
+        try:
+            apply_choice(action)
+        except _GoBack:
+            continue
+
+
+def _run_toolbox(
+    profile_data: Optional[Dict],
+    working_path: Optional[str],
+    dirty: bool,
+) -> Tuple[Optional[Dict], Optional[str], bool, bool]:
+    """Run the toolbox as its own menu level.
+
+    Returns ``(profile_data, working_path, dirty, exit_requested)``. Back and Esc
+    return to the launchpad; only the explicit Exit entry asks for the whole wizard
+    to close.
+    """
+    while True:
+        action = _menu("Open the toolbox:", _toolbox_choices())
+        if action is None:
+            return profile_data, working_path, dirty, False
+
+        if action == MENU_EXIT:
+            return profile_data, working_path, dirty, True
+        if action == MENU_EDIT:
+            loaded = _load_profile_flow()
+            if loaded:
+                working_path, profile_data = loaded
+                dirty = False
+            continue
+        if action == MENU_SOURCES:
+            if _require_profile(profile_data):
+                dirty = _edit_with_back(_edit_sources, profile_data) or dirty
+            continue
+        if action == MENU_ENGINES:
+            _run_action(_manage_engines)
+            continue
+        if action == MENU_AGGREGATORS:
+            if _require_profile(profile_data):
+                dirty = _edit_with_back(_edit_aggregators, profile_data) or dirty
+            continue
+        if action == MENU_DEBUG:
+            if _require_profile(profile_data):
+                profile_data["debug"] = not bool(profile_data.get("debug"))
+                dirty = True
+                log.info("Debug logging: %s", "on" if profile_data["debug"] else "off")
+            continue
+        if action == MENU_HELP:
+            _run_action(_show_help_menu)
+            continue
+        if action == MENU_LOGS:
+            _run_action(_show_recent_logs)
+            continue
+        if action == MENU_CONVERT:
+            _run_action(_ask_convert_document)
+            continue
+        if action == MENU_UPDATE:
+            _run_action(lambda: print(update_sweepy()))
+            continue
 
 
 def run_wizard(
@@ -1352,17 +2118,29 @@ def run_wizard(
                 working_path, profile_data = loaded
 
         while True:
-            action = _ask(_wizard_menu_select(profile_data))
+            try:
+                action = _ask(_wizard_menu_select(profile_data))
+            except _GoBack:
+                action = MENU_EXIT
+            if action is None:
+                action = MENU_EXIT
 
             if action == MENU_TOOLBOX:
-                action = _ask(_select("Open the toolbox:", _toolbox_choices()))
-                if action is None or action == "Back to launchpad":
+                profile_data, working_path, dirty, exit_requested = _run_toolbox(
+                    profile_data, working_path, dirty
+                )
+                if not exit_requested:
                     continue
-            if action is None or action == MENU_EXIT:
+                action = MENU_EXIT
+
+            if action == MENU_EXIT:
                 if dirty and profile_data is not None:
-                    save = _ask(
-                        questionary.confirm("Save your changes before exiting?", default=True)
-                    )
+                    try:
+                        save = _ask(
+                            questionary.confirm("Save your changes before exiting?", default=True)
+                        )
+                    except _GoBack:
+                        save = False
                     if save:
                         working_path = _save_profile_flow(profile_data, working_path) or working_path
                 return working_path
@@ -1370,8 +2148,10 @@ def run_wizard(
                 _run_loaded_profile(profile_data, working_path, run_sweep)
                 continue
             if action == MENU_CREATE:
-                working_path, profile_data = _create_profile_flow()
-                dirty = False
+                created = _create_profile_flow()
+                if created:
+                    working_path, profile_data = created
+                    dirty = False
                 continue
             if action == MENU_LOAD:
                 loaded = _load_saved_profile_flow()
@@ -1395,23 +2175,30 @@ def run_wizard(
                 continue
             if action == MENU_SCALING:
                 if _require_profile(profile_data):
-                    dirty = _edit_scaling(profile_data) or dirty
+                    dirty = _edit_with_back(_edit_scaling, profile_data) or dirty
                 continue
             if action == MENU_AGGREGATORS:
                 if _require_profile(profile_data):
-                    dirty = _edit_aggregators(profile_data) or dirty
+                    dirty = _edit_with_back(_edit_aggregators, profile_data) or dirty
+                continue
+            if action == MENU_SOURCES:
+                if _require_profile(profile_data):
+                    dirty = _edit_with_back(_edit_sources, profile_data) or dirty
+                continue
+            if action == MENU_ENGINES:
+                _run_action(_manage_engines)
                 continue
             if action == MENU_HELP:
-                _show_help_menu()
+                _run_action(_show_help_menu)
                 continue
             if action == MENU_LOGS:
-                _show_recent_logs()
+                _run_action(_show_recent_logs)
                 continue
             if action == MENU_CONVERT:
-                _ask_convert_document()
+                _run_action(_ask_convert_document)
                 continue
             if action == MENU_UPDATE:
-                print(update_sweepy())
+                _run_action(lambda: print(update_sweepy()))
                 continue
     except (KeyboardInterrupt, EOFError):
         print("Setup cancelled — no profile saved.")

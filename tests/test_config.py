@@ -71,13 +71,13 @@ def test_ask_tab_accepts_text_select_and_checkbox_values():
         assert cfg._ask(question) == []
 
 
-def test_ask_escape_cancels_and_arrow_navigation_still_works():
+def test_ask_escape_goes_back_and_arrow_navigation_still_works():
     with create_pipe_input() as pipe_input:
         question = cfg.questionary.text(
             "Name", input=pipe_input, output=DummyOutput()
         )
         pipe_input.send_bytes(b"\x1b")
-        with pytest.raises(KeyboardInterrupt):
+        with pytest.raises(cfg._GoBack):
             cfg._ask(question)
 
     with create_pipe_input() as pipe_input:
@@ -88,7 +88,7 @@ def test_ask_escape_cancels_and_arrow_navigation_still_works():
         assert cfg._ask(question) == "Edit"
 
 
-def test_wizard_escape_exits_without_saving(monkeypatch):
+def test_wizard_escape_returns_to_launchpad_without_saving(monkeypatch):
     def ask_name(current=None):
         with create_pipe_input() as pipe_input:
             question = cfg.questionary.text(
@@ -100,20 +100,15 @@ def test_wizard_escape_exits_without_saving(monkeypatch):
     monkeypatch.setattr(
         cfg, "_build_steps", lambda: [cfg._Step("name", "Name", ask_name)]
     )
+    selects = iter(["Create a new profile", "Exit"])
     monkeypatch.setattr(
-        cfg, "_wizard_menu_select", lambda profile_data=None: _stub("Create a new profile")
-    )
-    monkeypatch.setattr(
-        cfg.questionary, "select", lambda *a, **k: _stub("Create a new profile")
+        cfg, "_wizard_menu_select", lambda profile_data=None: _stub(next(selects))
     )
     monkeypatch.setattr(
         cfg, "save_profile", lambda *args, **kwargs: pytest.fail("profile was saved")
     )
 
-    with pytest.raises(SystemExit) as error:
-        cfg.run_wizard()
-
-    assert error.value.code == 0
+    assert cfg.run_wizard() is None
 
 
 def _stub(answer):
@@ -373,9 +368,31 @@ def test_main_menu_renders_profile_tiles_and_supports_horizontal_navigation(monk
     )
 
 
+def test_odd_tile_count_centers_the_last_tile(monkeypatch):
+    monkeypatch.setattr(
+        cfg.shutil, "get_terminal_size", lambda fallback: SimpleNamespace(columns=80, lines=24)
+    )
+    monkeypatch.setattr(cfg, "_MENU_TILES", cfg._MENU_TILES[:5])
+
+    with create_pipe_input() as pipe_input:
+        question = cfg._wizard_menu_select(input=pipe_input, output=DummyOutput())
+
+    rendered = "".join(
+        fragment[1] for fragment in question.application.layout.container.content.text()
+    )
+    card_rows = [
+        line
+        for line in rendered.splitlines()
+        if "╭" in line and "│" in line and "┤" not in line
+    ]
+    assert card_rows[-1].index("╭") > card_rows[0].index("╭")
+
+
 def test_toolbox_keeps_secondary_actions_available():
     assert cfg._toolbox_choices() == [
         cfg.MENU_EDIT,
+        cfg.MENU_SOURCES,
+        cfg.MENU_ENGINES,
         cfg.MENU_AGGREGATORS,
         cfg.MENU_DEBUG,
         cfg.MENU_HELP,
@@ -383,7 +400,6 @@ def test_toolbox_keeps_secondary_actions_available():
         cfg.MENU_CONVERT,
         cfg.MENU_UPDATE,
         cfg.MENU_EXIT,
-        "Back to launchpad",
     ]
 
 
@@ -470,9 +486,33 @@ def test_menu_choices_show_primary_tiles_and_toolbox_contains_utilities():
         cfg.MENU_LOAD,
         cfg.MENU_SCALING,
         cfg.MENU_TOOLBOX,
+        cfg.MENU_EXIT,
     ]
     assert cfg.MENU_UPDATE in cfg._toolbox_choices()
     assert cfg.MENU_EXIT in cfg._toolbox_choices()
+
+
+def test_menu_tiles_fill_a_balanced_grid():
+    assert len(cfg._MENU_TILES) % 2 == 0
+
+
+def test_menu_tile_text_fits_the_narrowest_two_column_card():
+    # Below 70 columns the launchpad switches to one column, so 70 is the tightest grid.
+    inner_width = (70 - 2 - 9) // 2 - 2
+    for number, title, description, _ in cfg._MENU_TILES:
+        assert len(f" {number}  {title}") < inner_width
+        assert len(f" {description}") < inner_width
+
+
+def test_exit_tile_closes_the_wizard(monkeypatch):
+    monkeypatch.setattr(cfg, "_print_welcome_banner", lambda: None)
+    tiles = [tile[3] for tile in cfg._MENU_TILES]
+    assert tiles[-1] == cfg.MENU_EXIT
+
+    monkeypatch.setattr(
+        cfg, "_wizard_menu_select", lambda profile_data=None: _stub(cfg.MENU_EXIT)
+    )
+    assert cfg.run_wizard() is None
 
 
 def test_menu_choices_start_with_run_entry():
@@ -564,7 +604,7 @@ def test_wizard_show_help_lists_flags_and_links(monkeypatch, tmp_path, capsys):
         iter([]),
         iter([]),
         iter([]),
-        iter(["Show help", "Back to main menu", "Exit"]),
+        iter(["Show help", cfg.BACK_LABEL, "Exit"]),
     )
     monkeypatch.chdir(tmp_path)
 
@@ -735,7 +775,7 @@ def test_wizard_scaling_editor_validates_and_saves(monkeypatch, tmp_path):
             "Cards per page (report.cards_per_page)",
             "Report style (report.style)",
             "legacy",
-            "Back to main menu",
+            cfg.BACK_LABEL,
             "Exit",
             "Overwrite profiles/alice_writer.yaml",
         ]
@@ -774,7 +814,7 @@ def test_wizard_aggregator_editor_adds_custom_aggregator(monkeypatch, tmp_path):
             "Add or edit aggregators",
             "Toggle aggregator feeds",
             "Add a custom aggregator",
-            "Back to main menu",
+            cfg.BACK_LABEL,
             "Exit",
             "Overwrite profiles/alice_writer.yaml",
         ]
@@ -816,7 +856,7 @@ def test_wizard_aggregator_editor_removes_custom_aggregator(monkeypatch, tmp_pat
             "Add or edit aggregators",
             "Remove a custom aggregator",
             "Breezy HR (breezy.hr)",
-            "Back to main menu",
+            cfg.BACK_LABEL,
             "Exit",
             "Overwrite profiles/has_custom.yaml",
         ]

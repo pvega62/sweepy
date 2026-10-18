@@ -167,6 +167,42 @@ def test_create_profile_writes_synonym_groups(tmp_path, monkeypatch):
     assert saved["resume"]["synonyms"] == groups
 
 
+def test_create_profile_writes_sources_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    pdf = tmp_path / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+
+    out = server.create_profile(
+        name="Alice",
+        titles=["Writer"],
+        location="NYC",
+        resume_path=str(pdf),
+        sources_config={"enabled": ["jobspy", "openroles"], "openroles": {"companies": ["figma"]}},
+    )
+    data = json.loads(out)
+
+    assert data["status"] == "ok"
+    with open(data["profile_path"], encoding="utf-8") as handle:
+        saved = yaml.safe_load(handle)
+    assert saved["sources"]["enabled"] == ["jobspy", "openroles"]
+    assert saved["sources"]["openroles"]["companies"] == ["figma"]
+
+
+def test_create_profile_rejects_invalid_sources_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    pdf = tmp_path / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+
+    out = server.create_profile(
+        name="Alice",
+        titles=["Writer"],
+        location="NYC",
+        resume_path=str(pdf),
+        sources_config={"enabled": ["openroles"], "openroles": {"companies": []}},
+    )
+    assert json.loads(out)["status"] == "error"
+
+
 def test_get_results_excludes_export_files(tmp_path, monkeypatch):
     results = tmp_path / "results"
     results.mkdir()
@@ -316,6 +352,37 @@ def test_run_sweep_populates_session(tmp_path, monkeypatch, reset_session):
     assert data["status"] == "ok"
     assert data["job_ids"] == ["abc123"]
     assert data["card_count"] == 1
+
+
+def test_run_sweep_reports_skipped_sources(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    fake_result = {
+        "status": "completed",
+        "discovered_count": 1,
+        "active_count": 1,
+        "top_match": None,
+        "reports": {},
+        "top_roles": [],
+        "cards": [_card()],
+        "output_dir": str(tmp_path),
+        "profile": {"name": "Test"},
+        "skipped_sources": [{"name": "jobdrop", "reason": "timeout"}],
+    }
+    monkeypatch.setattr(server, "run_sweep_pipeline", lambda **kwargs: fake_result)
+
+    data = json.loads(asyncio.run(server.run_sweep(ctx=None)))
+    assert data["skipped_sources"] == [{"name": "jobdrop", "reason": "timeout"}]
+
+
+def test_run_sweep_defaults_skipped_sources_to_empty(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(
+        server,
+        "run_sweep_pipeline",
+        lambda **kwargs: {"status": "completed", "cards": [], "reports": {}},
+    )
+    data = json.loads(asyncio.run(server.run_sweep(ctx=None)))
+    assert data["skipped_sources"] == []
 
 
 def test_submit_judgments_and_get_jobs_roundtrip(tmp_path, monkeypatch, reset_session):
