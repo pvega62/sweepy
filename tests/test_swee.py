@@ -116,6 +116,50 @@ def test_pipeline_no_valid_jobs(tmp_path, monkeypatch):
     assert result["top_roles"] == []
 
 
+def test_pipeline_merges_optional_engine_results(tmp_path, monkeypatch):
+    jobs = _jobs(2)
+    _mock_engine(monkeypatch, jobs)
+    profile = _profile(str(tmp_path))
+    profile["sources"] = {"enabled": ["jobdrop"], "jobdrop": {"sites": ["wellfound"]}}
+
+    seen = {}
+
+    def fake_engines(names, titles, *args, **kwargs):
+        seen["names"] = names
+        extra = {
+            "title": "T9",
+            "company": "C",
+            "location": "L",
+            "match_score": 80,
+            "url": "u9",
+            "platform": "Wellfound",
+        }
+        kwargs["skipped"].append({"name": "jobdrop", "reason": "timeout"})
+        return [extra], {"Wellfound": 1}
+
+    monkeypatch.setattr(swee, "discover_engines", fake_engines)
+    result = swee.run_sweep_pipeline(profile_dict=profile)
+
+    assert seen["names"] == ["jobdrop"]
+    assert result["skipped_sources"] == [{"name": "jobdrop", "reason": "timeout"}]
+    assert result["discovered_count"] >= 3
+
+
+def test_pipeline_skips_disabled_engines(tmp_path, monkeypatch):
+    _mock_engine(monkeypatch, _jobs(1))
+    profile = _profile(str(tmp_path))
+    profile["sources"] = {"enabled": ["jobspy"], "jobspy": {"sites": ["linkedin"]}}
+
+    monkeypatch.setattr(
+        swee,
+        "discover_engines",
+        lambda names, *a, **k: pytest.fail(f"unexpected engines: {names}"),
+    )
+    result = swee.run_sweep_pipeline(profile_dict=profile)
+    assert result["status"] == "completed"
+    assert result["skipped_sources"] == []
+
+
 def test_pipeline_all_formats(tmp_path, monkeypatch):
     jobs = _jobs(2)
     _mock_engine(monkeypatch, jobs)

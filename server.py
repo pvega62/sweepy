@@ -55,6 +55,7 @@ with contextlib.redirect_stdout(sys.stderr):
     from engine.pdf_builder import build_pdf
     from engine.report import build_report
     from engine.session import SweepSession, stable_id
+    from engine.sweep_config import normalize_sources, validate_sources
     from swee import run_sweep_pipeline
 
 mcp = FastMCP("sweepy")
@@ -210,6 +211,7 @@ def create_profile(
     must_have_skills: Optional[List[str]] = None,
     synonyms: Optional[list] = None,
     platforms: Optional[dict] = None,
+    sources_config: Optional[dict] = None,
     output_filename: Optional[str] = None
 ) -> str:
     """
@@ -228,6 +230,9 @@ def create_profile(
             [['docs-as-code', 'documentation as code']]. Matching then treats every
             member of a group as equivalent in both directions.
         platforms: Optional dictionary configuring platforms to sweep.
+        sources_config: Optional dictionary merged into the profile's ``sources`` block,
+            such as {"enabled": ["jobspy", "openroles"], "openroles": {"companies": ["figma"]}}.
+            Every enabled engine passes validation before the file is written.
         output_filename: Optional custom YAML path (defaults to profiles/{name}_{title}.yaml).
 
     Returns:
@@ -277,6 +282,14 @@ def create_profile(
         }
         if synonyms:
             profile_data["resume"]["synonyms"] = synonyms
+        if sources_config:
+            profile_data["sources"] = dict(sources_config)
+            runtime = normalize_sources(profile_data)
+            errors = validate_sources(
+                {engine: runtime["engines"][engine] for engine in runtime["enabled"]}
+            )
+            if errors:
+                raise ValueError("Invalid sources_config: " + "; ".join(errors))
 
         target_path = (
             _safe_output_path(output_filename)
@@ -353,6 +366,7 @@ async def run_sweep(
             "top_roles": results.get("top_roles", [])[:5],
             "job_ids": [c["id"] for c in _sorted_cards()],
             "card_count": len(cards),
+            "skipped_sources": results.get("skipped_sources", []),
         }
         return _ok(**summary)
     except _EXPECTED as exc:

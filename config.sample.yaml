@@ -62,11 +62,25 @@ platforms:
 # Deterministic (no-key) sources. Empty boards/orgs/slugs/categories fall back to the
 # curated seed lists in data/sources/. Each source also honors its platforms.<x> flag.
 sources:
+  # Optional. When omitted, Sweepy enables JobSpy plus the native ATS readers.
+  # Optional engines (`hirehunt`, `openroles`, `jobdrop`, `apify`) need their library
+  # installed first: run `sweepy --install-engines all`, or pick
+  # "Download job engines" in the wizard toolbox.
+  # enabled: [jobspy, ats, openroles]
   jobspy:
     linkedin: true
     indeed: true
     glassdoor: true
     zip_recruiter: true
+    # Newer shape; takes precedence over the board booleans above.
+    # sites: [linkedin, indeed, glassdoor, zip_recruiter]
+    # Proxies are opt-in and stay local to your machine.
+    # proxies: ["user:pass@host:port"]
+    # Restore the built-in Chrome User-Agent by leaving this out.
+    # user_agent: null
+    # Descriptions supply the scoring text. Turn this off only when you accept
+    # weaker match scores in exchange for a faster sweep.
+    fetch_descriptions: true
   greenhouse:
     enabled: true
     boards: []          # e.g. ["databricks", "gitlab", "cloudflare", "robinhood"]
@@ -82,6 +96,29 @@ sources:
   builtinnyc:
     enabled: true
     categories: []      # e.g. ["jobs/technical-writer"]
+
+  # Optional engines. Uncomment a block after installing its library.
+  # hirehunt:
+  #   sources: [linkedin, indeed, naukri, internshala, shine]
+  # openroles:
+  #   ats: [greenhouse, lever, ashby, workday]
+  #   companies: [figma, stripe, notion]   # required: openroles reads boards you name
+  # jobdrop:
+  #   sites: [linkedin, indeed, google, glassdoor]
+  #   headless: true
+  #   fetch_descriptions: true
+  # apify:
+  #   actor: curious_coder/linkedin-jobs-scraper   # reads APIFY_TOKEN from the environment
+
+cache:
+  enabled: true
+  ttl_seconds: 3600
+
+orchestrator:
+  timeout_per_source_seconds: 180
+  circuit_breaker:
+    failure_threshold: 5
+    cooldown_seconds: 30
 
 report:
   style: "cards"        # "cards" (default) | "legacy"

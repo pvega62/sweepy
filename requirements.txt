@@ -18,6 +18,11 @@ pandas==2.2.3
 mcp==1.30.0
 anyio==4.12.1
 
+# Optional job engines (hirehunt, openroles, jobdrop, apify) live in
+# requirements-engines.txt and the pyproject extras. Install them from the
+# wizard's "Download job engines" screen or `sweepy --install-engines all`.
+# Sweepy skips an engine whose library is missing instead of failing a sweep.
+
 # NOTE: On Python 3.13, pymupdf may require source compilation if pre-built
 # wheels are not yet available. Install the Microsoft C++ Build Tools
 # ("Desktop development with C++") first, or use Python 3.10-3.12.

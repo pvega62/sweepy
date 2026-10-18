@@ -7,7 +7,6 @@ import sys
 from typing import List, Optional
 
 log = logging.getLogger("sweepy.engine.updater")
-
 _DEFAULT_REMOTE = "origin"
 
 
@@ -115,9 +114,13 @@ def _tracking_counts(repo_root: str, status: dict) -> dict:
 
 def _reinstall_dependencies(repo_root: str) -> _GitResult:
     """Reinstall requirements.txt with the interpreter that is running Sweepy."""
+    return _install_requirements(repo_root, ["-r", "requirements.txt"])
+
+
+def _install_requirements(repo_root: str, args: List[str]) -> _GitResult:
     try:
         completed = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+            [sys.executable, "-m", "pip", "install", *args],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -127,6 +130,30 @@ def _reinstall_dependencies(repo_root: str) -> _GitResult:
     except FileNotFoundError:
         return _GitResult(returncode=127, stderr="pip was not found.")
     return _GitResult(completed.returncode, completed.stdout, completed.stderr)
+
+
+def _reinstall_optional_engines(repo_root: str, engine_names: List[str]) -> _GitResult:
+    """Reinstall the optional engines this checkout already had.
+
+    A code pull can leave installed extras behind, so the update keeps them in
+    step with the new code instead of silently dropping them.
+    """
+    from engine.engines import install_specs
+
+    specs = install_specs(engine_names)
+    if not specs:
+        return _GitResult(returncode=0)
+    return _install_requirements(repo_root, list(specs))
+
+
+def _installed_optional_engines() -> List[str]:
+    """Name the optional engines already present, ignoring the built-in ones."""
+    try:
+        from engine.engines import installed_engines
+
+        return installed_engines(include_core=False)
+    except Exception:  # an import problem must never block a code update
+        return []
 
 
 def check_for_updates(repo_root: Optional[str] = None) -> str:
@@ -161,6 +188,7 @@ def update_sweepy(repo_root: Optional[str] = None) -> str:
         return "No Git remote named 'origin' is configured."
 
     old_version = _read_version(repo_root)
+    optional_engines = _installed_optional_engines()
     _fetch(repo_root)
     status = _tracking_counts(repo_root, status)
     if status["upstream"] is None:
@@ -193,4 +221,14 @@ def update_sweepy(repo_root: Optional[str] = None) -> str:
             f"Run 'python -m pip install -r requirements.txt' yourself. {tail}"
         )
 
-    return f"Sweepy updated from v{old_version} to v{new_version}."
+    extras_note = ""
+    if optional_engines:
+        extras = _reinstall_optional_engines(repo_root, optional_engines)
+        if extras.returncode != 0:
+            extras_tail = (extras.stderr or extras.stdout or "pip reported an error.").strip()[-400:]
+            extras_note = (
+                f" Optional engines need a reinstall too: "
+                f"{', '.join(optional_engines)}. {extras_tail}"
+            )
+
+    return f"Sweepy updated from v{old_version} to v{new_version}.{extras_note}"

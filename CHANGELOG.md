@@ -2,6 +2,35 @@
 
 Sweepy records every change in this file. It follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for the format and [Semantic Versioning](https://semver.org/spec/v2.0.0.html) for the version numbers.
 
+## [3.0.0] - 2026-10-17
+
+### Added
+- Multi-engine orchestrator. One `ScraperAdapter` contract now covers every scraper, and `engine/discovery.py` dispatches through `engine/adapters/` instead of calling JobSpy and the native readers in sequence. Enabled engines start together, so a sweep takes about as long as the slowest engine.
+- Four downloadable engines. `hirehunt` adds India-first boards plus LinkedIn and Indeed through their APIs. `openroles` reads Greenhouse, Lever, Ashby, and Workday boards you name. `jobdrop` reaches 33 boards, including Google, Wellfound, iCIMS, Dice, and USAJobs. `apify` runs managed actors. Each one declares the boards it scrapes in `engine/engines.py`.
+- Engine downloads inside the wizard. **Open Toolbox** then **Download job engines** prints a status table, shows what each engine scrapes, and installs on confirmation with a `--user` retry and an exact retry command. Selecting a missing engine while building a profile offers the download in place. Installing never silently enables an engine.
+- `sweepy --list-engines` and `sweepy --install-engines all|jobdrop,openroles`. Both run without a profile.
+- `sweepy --setup --non-interactive` builds or updates a profile from flags: `--sources`, `--jobspy-sites`, `--hirehunt-sources`, `--jobdrop-sites`, `--openroles-companies`, `--apify-actor`, `--timeout`, `--cache-ttl`, `--no-cache`, `--name`, `--titles`, `--location`, `--resume`.
+- Per-engine timeouts and a circuit breaker. `orchestrator.timeout_per_source_seconds` bounds each engine, and `orchestrator.circuit_breaker` skips an engine after 5 consecutive failures for 30 seconds.
+- Discovery cache. `cache.enabled` and `cache.ttl_seconds` store normalized results in SQLite under `~/.sweepy/cache.db`. The key covers the query, the enabled engines, and their settings, and the payload is JSON rather than pickle.
+- Normalized output. Every engine frame maps onto one schema with `title`, `company`, `location`, `url`, `source`, `posted_at`, salary fields, `description`, `remote`, `employment_type`, and `raw`. Results dedupe by URL, then by role details when a URL is missing.
+- `skipped_sources` in the `run_sweep` MCP response. Failed and timed-out engines appear as `{"name": ..., "reason": ...}` entries, and the sweep still returns success.
+- `sources_config` on the `create_profile` MCP tool. It merges into the generated `sources` block and validates every enabled engine first.
+- Wizard engine management. **Manage job engines** in the toolbox, review-screen choices for engines and engine performance, per-engine prompts, masked proxy entry, and a "Job engines" help screen.
+- Wizard navigation. Every submenu opens with **← Back**, and Esc goes up exactly one level: from a question to the previous answer, from a submenu to its parent menu, and from the launchpad out of the wizard. The toolbox now runs as its own menu level, so backing out of engine, aggregator, or help screens returns to the toolbox instead of the launchpad. Ctrl+C still quits from anywhere.
+- Launchpad grid. The main menu gains an **Exit Sweepy** tile, so its six tiles fill three even rows. A lone trailing tile centers itself, which keeps any future odd tile count balanced.
+
+### Changed
+- Optional engines are extras. `requirements-engines.txt` holds `hirehunt`, `openroles`, `jobdrop`, and `apify-client`, and `pyproject.toml` publishes `engines`, `apify`, and `all-engines` extras. Adapters import their library at call time and raise an install message instead of breaking startup.
+- `sweepy --update` reinstalls the optional engines a checkout already had, so a code pull does not strand them.
+- Descriptions stay on by default. Scoring needs posting text, so `fetch_descriptions: true` is the default for JobSpy and jobdrop; turning it off trades match quality for speed.
+- JobSpy sends a current Chrome User-Agent by default and accepts a per-engine override.
+- `discover_jobs()` and `discover_sources()` keep their signatures and return contracts as thin wrappers over the orchestrator, so existing callers and tests keep working.
+- Profiles without `sources.enabled` resolve to JobSpy plus the native ATS readers. Legacy board booleans under `sources.jobspy` still work.
+
+### Fixed
+- One failing engine no longer empties a sweep. Failures, timeouts, and open circuits are isolated, logged with the engine name, and reported in `skipped_sources`.
+- Concurrent runs no longer collide in the cache. Semaphores belong to each call rather than the module, and cache keys include engine settings.
+
 ## [2.4.0] - 2026-10-15
 
 ### Added

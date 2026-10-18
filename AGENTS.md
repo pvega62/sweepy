@@ -53,10 +53,13 @@ Builds and saves a YAML configuration profile in the `profiles/` directory.
   - `min_salary`: lowest acceptable base salary as an integer (such as `90000`). Use `0` if unconstrained.
   - `must_have_skills`: optional list of mandatory keywords to boost ranking (such as `["API Documentation", "Markdown"]`).
   - `platforms`: optional dictionary enabling or disabling scrapers (such as `{"greenhouse": True, "ashby": True, "lever": True, "workable": True, "aggregators": False}`).
+  - `sources_config`: optional dictionary merged into the profile's `sources` block (such as `{"enabled": ["jobspy", "openroles"], "openroles": {"companies": ["figma"]}}`). Every enabled engine validates before the file is written, so a bad block returns an error instead of a broken profile.
   - `output_filename`: optional explicit destination YAML path. Defaults to `profiles/{name}_{title}.yaml`.
 
 ### 2. `run_sweep`
 Executes the 5-stage discovery pipeline: discovery, validation, deterministic keyword scoring, report generation, and CSV/JSON export. It populates the session with preliminary cards and returns their ids. This tool does not run LLM assessment; continue through `get_jobs`, `submit_judgments`, and `render_report` for the default user-requested search workflow.
+
+Enabled engines run concurrently behind one adapter, so the sweep takes about as long as the slowest engine. A single engine that times out or fails does not fail the call; report `skipped_sources` to the user when it comes back non-empty, naming the engine and the reason (`timeout`, `circuit_open`, or the error text).
 
 ### 3. `get_results`
 Retrieves top matching roles, playbook recommendations, and artifact paths from a completed sweep without re-running discovery.
@@ -175,7 +178,6 @@ Offer to generate custom exports or regenerate the styled PDF report if the user
 ---
 
 ## Environment and CLI fallback
-
 When operating in environments without direct MCP tool support:
 
 ### Execution command
@@ -193,7 +195,28 @@ To run interactively with the terminal wizard:
 python swee.py
 ```
 
-The wizard opens its main menu. There you run a sweep with the loaded profile, create or load a saved profile, edit a profile, toggle debug logging, adjust scoring and scaling, manage aggregators, convert a document to PDF (the bonus entry accepts `.docx`, `.doc`, `.txt`, `.md`, and `.pdf` with no profile loaded), and update Sweepy. `python swee.py --setup` opens the same menu, and `python swee.py --setup --profile profiles/your_profile.yaml` opens that profile for editing straight away.
+The wizard opens its main menu. There you run a sweep with the loaded profile, create or load a saved profile, edit a profile, toggle debug logging, adjust scoring and scaling, manage aggregators, manage or download job engines, convert a document to PDF (the bonus entry accepts `.docx`, `.doc`, `.txt`, `.md`, and `.pdf` with no profile loaded), and update Sweepy. `python swee.py --setup` opens the same menu, and `python swee.py --setup --profile profiles/your_profile.yaml` opens that profile for editing straight away.
+
+Every submenu starts with **← Back** and returns to the menu that opened it. Esc goes up one level: from a question to the previous answer, from a submenu to its parent, and from the launchpad out of the wizard. Ctrl+C quits from anywhere.
+
+List the job engines and their install state, or download the optional ones:
+
+```bash
+python swee.py --list-engines
+python swee.py --install-engines all
+python swee.py --install-engines jobdrop,openroles
+```
+
+Build a profile without prompts when the environment has no interactive terminal:
+
+```bash
+python swee.py --setup --non-interactive \
+  --name "Alex Rivera" \
+  --titles "Technical Writer" \
+  --location "New York, NY" \
+  --resume C:/resumes/alex.pdf \
+  --sources jobspy,ats
+```
 
 Run a sweep with the last saved profile:
 
@@ -241,3 +264,11 @@ Install the required dependencies:
 - `beautifulsoup4` (HTML stripping for Greenhouse, Lever, and Workable descriptions)
 - `questionary` (interactive wizard)
 - `anyio` (async I/O for MCP)
+
+The optional engines install separately, from `requirements-engines.txt` or `python swee.py --install-engines all`:
+- `hirehunt` (India-first boards, plus LinkedIn and Indeed APIs)
+- `openroles` (Greenhouse, Lever, Ashby, and Workday boards)
+- `jobdrop` (33 boards including Google and Wellfound)
+- `apify-client` (`apify` engine; needs `APIFY_TOKEN`)
+
+Sweepy skips an engine whose library is missing and reports it in `skipped_sources`, so a missing extra never breaks a sweep.

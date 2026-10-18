@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime
 import logging
 import os
@@ -17,16 +18,25 @@ from engine.config import (
     load_config,
     record_last_profile,
     run_wizard,
+    save_profile,
 )
-from engine.discovery import discover_jobs, discover_sources
+from engine.discovery import (
+    build_cache,
+    build_circuit,
+    discover_engines,
+    discover_jobs,
+    discover_sources,
+)
 from engine.documents import convert_to_pdf
 from engine.docx import convert_docx_to_pdf
+from engine.engines import install_engines, status_table
 from engine.enrich import enrich_jobs, get_tracks
 from engine.exporter import export_to_csv, export_to_json, export_to_png
 from engine.logging import enable_debug_logging, recent_log_lines
 from engine.pdf_builder import build_pdf
 from engine.report import build_report
 from engine.scorer import normalize_synonyms, score_jobs, score_jobs_by_track
+from engine.sweep_config import normalize_sources, validate_sources
 from engine.updater import check_for_updates, update_sweepy
 from engine.validator import filter_valid_jobs
 
@@ -43,8 +53,6 @@ def _read_version() -> str:
 
 
 VERSION = _read_version()
-
-_DEFAULT_JOBSPY_SITES = ["linkedin", "indeed", "glassdoor", "zip_recruiter"]
 
 _DEFAULT_PROFILE_CANDIDATES = (
     "profiles/custom_profile.yaml",
@@ -74,6 +82,93 @@ def _configure_logging() -> None:
     root.propagate = False
 
 
+def _split_list(value: Optional[str]) -> list:
+    return [part.strip() for part in str(value or "").split(",") if part.strip()]
+
+
+def _setup_headless(args) -> None:
+    """Build or update a profile from flags without opening the wizard."""
+    base: dict = {}
+    if args.profile and os.path.exists(args.profile):
+        base = load_config(args.profile)
+
+    search = dict(base.get("search") or {})
+    resume = dict(base.get("resume") or {})
+
+    name = args.name or base.get("name")
+    titles = _split_list(args.titles) or list(search.get("titles") or [])
+    location = args.location or search.get("location")
+    resume_path = args.resume or resume.get("path")
+
+    missing = [
+        label
+        for label, value in (
+            ("--name", name),
+            ("--titles", titles),
+            ("--location", location),
+            ("--resume", resume_path),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(
+            "Non-interactive setup needs " + ", ".join(missing) + " (or an existing --profile)"
+        )
+
+    profile = copy.deepcopy(base)
+    profile["name"] = name
+    search.update({"titles": titles, "location": location})
+    profile["search"] = search
+    resume["path"] = resume_path
+    profile["resume"] = resume
+
+    sources = dict(profile.get("sources") or {})
+    if args.sources:
+        sources["enabled"] = _split_list(args.sources)
+    if args.jobspy_sites:
+        sources["jobspy"] = {**(sources.get("jobspy") or {}), "sites": _split_list(args.jobspy_sites)}
+    if args.hirehunt_sources:
+        sources["hirehunt"] = {
+            **(sources.get("hirehunt") or {}),
+            "sources": _split_list(args.hirehunt_sources),
+        }
+    if args.jobdrop_sites:
+        sources["jobdrop"] = {**(sources.get("jobdrop") or {}), "sites": _split_list(args.jobdrop_sites)}
+    if args.openroles_companies:
+        sources["openroles"] = {
+            **(sources.get("openroles") or {}),
+            "companies": _split_list(args.openroles_companies),
+        }
+    if args.apify_actor:
+        sources["apify"] = {**(sources.get("apify") or {}), "actor": args.apify_actor}
+    if sources:
+        profile["sources"] = sources
+
+    if args.timeout or args.cache_ttl is not None or args.no_cache:
+        orchestrator = dict(profile.get("orchestrator") or {})
+        cache = dict(profile.get("cache") or {})
+        if args.timeout:
+            orchestrator["timeout_per_source_seconds"] = args.timeout
+        if args.cache_ttl is not None:
+            cache["ttl_seconds"] = args.cache_ttl
+        if args.no_cache:
+            cache["enabled"] = False
+        profile["orchestrator"] = orchestrator
+        profile["cache"] = cache
+
+    runtime = normalize_sources(profile)
+    errors = validate_sources(
+        {engine: runtime["engines"][engine] for engine in runtime["enabled"]},
+        check_installed=True,
+    )
+    if errors:
+        raise ValueError("; ".join(errors))
+
+    target = args.profile if args.profile else None
+    save_profile(profile, target)
+    print(f"Engines: {', '.join(runtime['enabled']) or '(none)'}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sweepy - Automated Job Board Aggregator")
     parser.add_argument("--run", action="store_true", help="Run a sweep with the last saved profile")
@@ -92,6 +187,44 @@ def main() -> None:
     parser.add_argument("--logs", action="store_true", help="Show the most recent debug log entries")
     parser.add_argument("--update", action="store_true", help="Pull the latest Sweepy code and reinstall dependencies")
     parser.add_argument("--check-update", action="store_true", help="Report whether a newer Sweepy version exists")
+    parser.add_argument(
+        "--list-engines",
+        action="store_true",
+        help="Show every job engine, what it scrapes, and whether it is installed",
+    )
+    parser.add_argument(
+        "--install-engines",
+        nargs="?",
+        const="all",
+        metavar="NAMES",
+        help="Download optional engines: 'all' or a comma-separated list",
+    )
+    parser.add_argument(
+        "--sources",
+        metavar="NAMES",
+        help="Enable these engines for a headless setup (comma-separated)",
+    )
+    parser.add_argument("--jobspy-sites", metavar="SITES", help="JobSpy boards for a headless setup")
+    parser.add_argument("--hirehunt-sources", metavar="SOURCES", help="HireHunt sources for a headless setup")
+    parser.add_argument("--jobdrop-sites", metavar="SITES", help="jobdrop boards for a headless setup")
+    parser.add_argument(
+        "--openroles-companies",
+        metavar="SLUGS",
+        help="Company slugs for openroles, comma-separated",
+    )
+    parser.add_argument("--apify-actor", metavar="ACTOR", help="Apify actor id for a headless setup")
+    parser.add_argument("--timeout", type=int, metavar="SECONDS", help="Per-source timeout in seconds")
+    parser.add_argument("--cache-ttl", type=int, metavar="SECONDS", help="Cache lifetime in seconds")
+    parser.add_argument("--no-cache", action="store_true", help="Disable the discovery cache")
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Build or update a profile from flags without opening the wizard",
+    )
+    parser.add_argument("--name", help="Candidate name for a headless setup")
+    parser.add_argument("--titles", metavar="TITLES", help="Target titles, comma-separated")
+    parser.add_argument("--location", help="Target location for a headless setup")
+    parser.add_argument("--resume", metavar="PATH", help="Resume path for a headless setup")
 
     args = parser.parse_args()
 
@@ -118,6 +251,28 @@ def main() -> None:
         print(check_for_updates())
         sys.exit(0)
 
+    if args.list_engines:
+        print(status_table())
+        sys.exit(0)
+
+    if args.install_engines:
+        names = _split_list(args.install_engines) or ["all"]
+        try:
+            results = install_engines(names, echo=print)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+        failed = False
+        for engine, result in results.items():
+            if result.get("installed"):
+                print(f"{engine}: ready")
+            else:
+                failed = True
+                print(f"{engine}: install failed - {result.get('detail')}")
+                if result.get("command"):
+                    print(f"  Retry with: {result['command']}")
+        sys.exit(1 if failed else 0)
+
     if args.convert:
         _print_banner()
         _convert_document(args.convert)
@@ -129,7 +284,14 @@ def main() -> None:
         sys.exit(0)
 
     if args.setup:
-        _open_wizard(args.profile)
+        if args.sources or args.non_interactive:
+            try:
+                _setup_headless(args)
+            except (FileNotFoundError, ValueError) as exc:
+                print(f"Error: {exc}")
+                sys.exit(1)
+        else:
+            _open_wizard(args.profile)
         sys.exit(0)
 
     if args.run or args.profile:
@@ -313,8 +475,11 @@ def run_sweep_pipeline(
     })
 
     sources = config.get("sources", {}) or {}
-    jobspy_cfg = sources.get("jobspy", {}) or {}
-    jobspy_sites = [s for s in _DEFAULT_JOBSPY_SITES if jobspy_cfg.get(s, True)]
+    runtime = normalize_sources(config)
+    extra_engines = [e for e in runtime["enabled"] if e not in ("jobspy", "ats")]
+    cache = build_cache(runtime)
+    circuit = build_circuit(runtime)
+    skipped_sources: list = []
 
     report = config.get("report", {}) or {}
     report_style = report.get("style", "cards")
@@ -351,14 +516,25 @@ def run_sweep_pipeline(
     log_fn("\n[2/5] Discovering roles...")
     jobs, platform_counts = discover_jobs(
         titles, location, remote_only, include_hybrid, min_salary, platforms,
-        sites=jobspy_sites, progress=progress
+        sources_config=sources, runtime=runtime, cache=cache, circuit=circuit,
+        skipped=skipped_sources, progress=progress,
     )
     source_jobs, source_counts = discover_sources(
         sources, titles, location, remote_only, include_hybrid, min_salary,
-        platforms=platforms, progress=progress
+        platforms=platforms, runtime=runtime, cache=cache, circuit=circuit,
+        skipped=skipped_sources, progress=progress,
     )
-    jobs = jobs + source_jobs
-    for plat_name, count in source_counts.items():
+    extra_jobs, extra_counts = (
+        discover_engines(
+            extra_engines, titles, location, remote_only, include_hybrid, min_salary,
+            runtime=runtime, cache=cache, circuit=circuit,
+            skipped=skipped_sources, progress=progress,
+        )
+        if extra_engines
+        else ([], {})
+    )
+    jobs = jobs + source_jobs + extra_jobs
+    for plat_name, count in {**source_counts, **extra_counts}.items():
         platform_counts[plat_name] = platform_counts.get(plat_name, 0) + count
     jobs = list({j["url"]: j for j in jobs if j.get("url")}.values())
     for plat_name, count in platform_counts.items():
@@ -376,6 +552,7 @@ def run_sweep_pipeline(
             "roles": [],
             "top_roles": [],
             "reports": {},
+            "skipped_sources": skipped_sources,
         }
 
     # [3/5] Validating URLs
@@ -400,6 +577,7 @@ def run_sweep_pipeline(
             "roles": [],
             "top_roles": [],
             "reports": {},
+            "skipped_sources": skipped_sources,
         }
 
     # [4/5] Scoring against resume
@@ -514,6 +692,7 @@ def run_sweep_pipeline(
         "output_dir": os.path.realpath(output_dir),
         "profile": config,
         "reports": generated_reports,
+        "skipped_sources": skipped_sources,
     }
 
 
