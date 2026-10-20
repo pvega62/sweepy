@@ -13,7 +13,7 @@ import pandas as pd
 
 log = logging.getLogger("sweepy.engine.cache")
 
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
 _DEFAULT_DIR = os.path.join(os.path.expanduser("~"), ".sweepy")
 _DEFAULT_NAME = "cache.db"
 

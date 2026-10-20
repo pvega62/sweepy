@@ -9,6 +9,7 @@ from engine.engine_defaults import (
     DEFAULT_APIFY_ACTOR,
     DEFAULT_CACHE,
     DEFAULT_HIREHUNT_SOURCES,
+    DEFAULT_HISTORY,
     DEFAULT_JOBDROP_SITES,
     DEFAULT_JOBSPY_SITES,
     DEFAULT_OPENROLES_ATS,
@@ -129,6 +130,7 @@ def normalize_sources(profile: Optional[dict]) -> dict:
             log.warning("Unknown job engine %r ignored", name)
 
     cache = {**DEFAULT_CACHE, **(profile.get("cache") or {})}
+    history = _history_config(profile.get("history"))
     orchestrator = {**DEFAULT_ORCHESTRATOR, **(profile.get("orchestrator") or {})}
     orchestrator["circuit_breaker"] = {
         **DEFAULT_ORCHESTRATOR["circuit_breaker"],
@@ -139,9 +141,27 @@ def normalize_sources(profile: Optional[dict]) -> dict:
         "enabled": [name for name in enabled if name in ADAPTERS],
         "engines": engines,
         "cache": cache,
+        "history": history,
         "orchestrator": orchestrator,
         "legacy_platforms": "enabled" not in raw,
     }
+
+
+def _history_config(raw) -> dict:
+    """Merge and validate the cross-run history block."""
+    if raw is not None and not isinstance(raw, dict):
+        log.warning("history must be a mapping; using defaults")
+        raw = {}
+    history = {**DEFAULT_HISTORY, **(raw or {})}
+    try:
+        history["retention_days"] = max(0, int(history["retention_days"]))
+    except (TypeError, ValueError):
+        log.warning("history.retention_days must be a whole number; using 4")
+        history["retention_days"] = DEFAULT_HISTORY["retention_days"]
+    if history["match"] not in ("url", "url+role"):
+        log.warning("history.match must be 'url' or 'url+role'; using 'url+role'")
+        history["match"] = DEFAULT_HISTORY["match"]
+    return history
 
 
 def _required_fields_present(name: str, config: dict) -> bool:

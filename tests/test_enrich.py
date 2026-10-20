@@ -79,6 +79,22 @@ def test_enrich_comp_not_disclosed():
     assert cards[0]["comp"] == "Not disclosed"
 
 
+def test_enrich_comp_keeps_hourly_unit():
+    cards = enrich_jobs([_job(min_amount=45, max_amount=55, salary_period="hour")], _profile())
+    assert cards[0]["comp"] == "$45 - $55 / hour"
+    assert cards[0]["salary_period"] == "hour"
+
+
+def test_enrich_comp_keeps_monthly_unit():
+    cards = enrich_jobs([_job(min_amount=8000, max_amount=10000, salary_period="month")], _profile())
+    assert cards[0]["comp"] == "$8K - $10K / month"
+
+
+def test_enrich_comp_collapses_equal_bounds():
+    cards = enrich_jobs([_job(min_amount=95000, max_amount=95000)], _profile())
+    assert cards[0]["comp"] == "$95K"
+
+
 def test_route_track_ties_resolve_to_first():
     tracks = [
         {"name": "A", "color": "#111", "route_keywords": ["x"]},

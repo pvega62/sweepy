@@ -306,7 +306,7 @@ def test_real_keys_open_the_toolbox_and_back(monkeypatch):
             return _stub_menu(config.MENU_EXIT)
 
         monkeypatch.setattr(config, "_wizard_menu_select", menu)
-        # Two downs reach the fifth tile (Open Toolbox) in a two-column grid.
+        # Two downs reach the fifth tile (Sweepy's Toolbox) in a two-column grid.
         # Enter opens it, then Enter accepts the first entry, which is Back.
         pipe_input.send_bytes(b"\x1b[B\x1b[B\r" + b"\r")
         assert config.run_wizard() is None

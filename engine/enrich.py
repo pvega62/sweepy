@@ -134,17 +134,19 @@ def _fmt_amount(value: float) -> str:
     return str(int(value))
 
 
+_PERIOD_SUFFIX = {"hour": " / hour", "day": " / day", "week": " / week", "month": " / month"}
+
+
 def _comp(job: dict) -> str:
     min_amt = job.get("min_amount") or 0
     max_amt = job.get("max_amount") or 0
     currency = job.get("currency", "USD") or "USD"
     sym = "$" if currency == "USD" else currency + " "
-    if min_amt and max_amt:
-        return f"{sym}{_fmt_amount(min_amt)} - {sym}{_fmt_amount(max_amt)}"
-    if max_amt:
-        return f"{sym}{_fmt_amount(max_amt)}"
-    if min_amt:
-        return f"{sym}{_fmt_amount(min_amt)}"
+    suffix = _PERIOD_SUFFIX.get(str(job.get("salary_period") or "year").lower(), "")
+    if min_amt and max_amt and min_amt != max_amt:
+        return f"{sym}{_fmt_amount(min_amt)} - {sym}{_fmt_amount(max_amt)}{suffix}"
+    if max_amt or min_amt:
+        return f"{sym}{_fmt_amount(max_amt or min_amt)}{suffix}"
     return "Not disclosed"
 
 
@@ -208,6 +210,7 @@ def enrich_jobs(scored_jobs: List[dict], profile: dict) -> List[dict]:
             "requirements": _requirements(description),
             "alignment": job.get("playbook", "") or "",
             "comp": _comp(job),
+            "salary_period": str(job.get("salary_period") or "year"),
             "benefits": "Not disclosed",
             "page": 0,
             "page_theme": "",

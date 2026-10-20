@@ -17,6 +17,7 @@ search:
   remote_only: false
   include_hybrid: true   # Set to false to exclude hybrid positions
   min_salary: 65000
+  salary_from_description: true   # Read pay from the posting text when a board omits structured pay
 
 resume:
   path: "C:/path/to/resume.pdf"
@@ -64,8 +65,10 @@ platforms:
 sources:
   # Optional. When omitted, Sweepy enables JobSpy plus the native ATS readers.
   # Optional engines (`hirehunt`, `openroles`, `jobdrop`, `apify`) need their library
-  # installed first: run `sweepy --install-engines all`, or pick
-  # "Download job engines" in the wizard toolbox.
+  # installed first. `sweepy --install-engines all` installs the compatible engines.
+  # Install jobdrop separately with
+  # `sweepy --install-engines jobdrop --allow-engine-conflicts`, or pick
+  # "Download job engines" in Sweepy's Toolbox.
   # enabled: [jobspy, ats, openroles]
   jobspy:
     linkedin: true
@@ -102,7 +105,7 @@ sources:
   #   sources: [linkedin, indeed, naukri, internshala, shine]
   # openroles:
   #   ats: [greenhouse, lever, ashby, workday]
-  #   companies: [figma, stripe, notion]   # required: openroles reads boards you name
+  #   companies: [figma, stripe, notion]   # required to enable OpenRoles; it reads boards you name
   # jobdrop:
   #   sites: [linkedin, indeed, google, glassdoor]
   #   headless: true
@@ -114,6 +117,17 @@ cache:
   enabled: true
   ttl_seconds: 3600
 
+# Cross-run history. Sweepy records every posting it reports and hides those
+# postings on later sweeps. A posting can reappear after retention_days pass.
+# `match: url` requires the same canonical URL; `url+role` also matches the same
+# title, company, and location on another board. `path: null` uses
+# ~/.sweepy/history.db, and SWEEPY_HISTORY_PATH overrides it.
+history:
+  enabled: true
+  retention_days: 4
+  match: "url+role"
+  path: null
+
 orchestrator:
   timeout_per_source_seconds: 180
   circuit_breaker:
@@ -121,8 +135,9 @@ orchestrator:
     cooldown_seconds: 30
 
 report:
-  style: "cards"        # "cards" (default) | "legacy"
-  cards_per_page: 4
+  style: "cards"
+  # Use up to six cards per page; long cards reduce the count to keep the layout clear.        # "cards" (default) | "legacy"
+  cards_per_page: 6
   max_cards: 24         # 0 = unlimited
   destinations: []      # extra directories to copy the PDF into
 
