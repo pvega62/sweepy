@@ -1,14 +1,21 @@
 # Optional job engines for Sweepy 3.0.
 #
 # Sweepy ships with JobSpy and its own zero-dependency ATS readers. These
-# engines add more boards and more defensive scraping. Install them all with
-# `pip install -r requirements-engines.txt`, or install one at a time from the
-# wizard's "Download job engines" screen or `sweepy --install-engines <name>`.
+# engines add more boards and more defensive scraping.
 #
+# Preferred installs, each in one resolution:
+#   pip install -e ".[all-engines]"     every compatible engine at once
+#   sweepy --install-engines all        the same set, one engine at a time
+#   sweepy                              wizard > Sweepy's Toolbox > Download job engines
+#
+# This file exists for pinned, non-editable installs of the same set.
 # Version ranges match the APIs the adapters were written against.
 
 hirehunt>=0.5,<0.6
 openroles>=0.1.2,<0.2
-jobdrop>=2.10,<3
-# apify-client is only needed when APIFY_TOKEN is set and the apify engine is enabled.
 apify-client>=3.3,<4
+
+# jobdrop is not listed here. Its curl-cffi pin cannot resolve next to JobSpy,
+# so a pip command that names both fails. Install it instead with:
+#   sweepy --install-engines jobdrop --allow-engine-conflicts
+# That path skips the stale pin and keeps JobSpy's curl_cffi.

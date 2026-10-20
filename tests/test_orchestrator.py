@@ -137,6 +137,23 @@ def test_cache_key_changes_with_engine_config(registry, tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
+def test_cache_key_separates_deduplicated_and_unfiltered_results(registry, tmp_path, monkeypatch):
+    calls = []
+
+    class Counting(_Fast):
+        def scrape(self, query, config):
+            calls.append(query)
+            return super().scrape(query, config)
+
+    monkeypatch.setitem(registry, "fast", Counting())
+    cache = ResultCache(path=str(tmp_path / "cache.db"), ttl=60)
+
+    scrape_all_sync({"keywords": "writer"}, ["fast"], {}, cache=cache, deduplicate=True)
+    scrape_all_sync({"keywords": "writer"}, ["fast"], {}, cache=cache, deduplicate=False)
+
+    assert len(calls) == 2
+
+
 def test_unknown_source_is_skipped(registry):
     frame, skipped = scrape_all_sync(
         {"keywords": "writer"}, ["mystery"], {}, use_cache=False, circuit=CircuitBreaker()
@@ -162,6 +179,38 @@ def test_duplicate_urls_collapse_across_engines(registry):
     )
     assert len(frame) == 1
     assert set(frame["source"]) == {"fast"}
+
+
+def test_dedupe_jobs_collapses_same_role_across_boards_but_not_same_board():
+    from engine.discovery import dedupe_jobs
+
+    postings = [
+        {
+            "title": "Technical Writer",
+            "company": "Acme",
+            "location": "NYC",
+            "url": "https://linkedin.example/jobs/1",
+            "platform": "LinkedIn",
+        },
+        {
+            "title": "Technical-Writer",
+            "company": "ACME",
+            "location": "N.Y.C.",
+            "url": "https://jobs.example.com/technical-writer",
+            "platform": "Greenhouse",
+        },
+        {
+            "title": "Technical Writer",
+            "company": "Acme",
+            "location": "NYC",
+            "url": "https://linkedin.example/jobs/2",
+            "platform": "LinkedIn",
+        },
+    ]
+
+    assert len(dedupe_jobs(postings)) == 2
+    assert dedupe_jobs(postings, enabled=False) == postings
+    assert dedupe_jobs([{"title": "Writer"}], enabled=False) == []
 
 
 def test_frame_to_jobs_labels_platforms_per_engine():

@@ -30,7 +30,10 @@ from engine.engine_defaults import (
     DEFAULT_OPENROLES_ATS,
 )
 from engine.engines import (
+    BOARD_CATALOG,
     ENGINE_CATALOG,
+    board_summary,
+    conflict_warnings,
     engine_status,
     install_command,
     install_engines,
@@ -289,7 +292,7 @@ def _wizard_menu_select(
                 f"{'Ready' if resume_path else 'Resume missing'}"
             )
         else:
-            status = "Current profile: none loaded  /  Build one to start"
+            status = "Current profile: none loaded  /  build one to start"
         line("├" + "─" * (width - 2) + "┤", "class:frame")
         line("│  " + status[: width - 5].ljust(width - 4) + "│", "class:status")
         line(
@@ -434,7 +437,7 @@ def _show_help_menu() -> None:
             print("\nWhat each engine scrapes")
             print(scrapes_table())
             print("\n  Sweepy downloads an engine only after you confirm.")
-            print("  Choose 'Download job engines' in the toolbox to install or inspect one.")
+            print("  Choose 'Download job engines' in Sweepy's Toolbox to install or inspect one.")
             print("  openroles needs company slugs; apify needs APIFY_TOKEN; hirehunt has no proxies.")
             print("  A failing engine is skipped after 5 consecutive failures for 30 seconds.")
             continue
@@ -717,26 +720,79 @@ def _ask_min_salary(current=None):
         log.warning("Could not parse salary %r. Enter a number like 65000, 65,000, or 65k.", raw)
 
 
-def _ask_platforms(current=None):
-    selected = set(current) if current is not None else {
-        "greenhouse", "ashby", "lever", "workable"
-    }
-    return _ask(
-        questionary.checkbox(
-            "Which platforms do you want to search?",
-            choices=[
-                questionary.Choice("Greenhouse", value="greenhouse", checked="greenhouse" in selected),
-                questionary.Choice("Ashby", value="ashby", checked="ashby" in selected),
-                questionary.Choice("Lever", value="lever", checked="lever" in selected),
-                questionary.Choice("Workable", value="workable", checked="workable" in selected),
-                questionary.Choice(
-                    "Aggregator feeds (Remotive, Adzuna)",
-                    value="aggregators",
-                    checked="aggregators" in selected,
-                ),
-            ],
+def _board_choice_label(engine: str, label: str) -> str:
+    status = board_summary(engine).split(" · ", 1)[0]
+    return f"{label}  [{engine} · {status}]"
+
+
+def _board_choices(selected: set) -> list:
+    """Group every searchable board by engine, tagging each with what it needs."""
+    choices = []
+    for engine, boards in BOARD_CATALOG.items():
+        choices.append(
+            questionary.Separator(f"── {engine} · {board_summary(engine)} ──")
         )
-    ) or []
+        for key, label in boards.items():
+            value = f"{engine}:{key}"
+            choices.append(
+                questionary.Choice(
+                    _board_choice_label(engine, label), value=value, checked=value in selected
+                )
+            )
+    return choices
+
+
+def _selected_boards(current) -> set:
+    """Read either the new per-engine dict or an old-style platform list."""
+    if isinstance(current, dict):
+        selected = set()
+        for engine, boards in current.items():
+            if engine == "aggregators":
+                for board in boards or []:
+                    selected.add(f"jobspy:{board}")
+                continue
+            for board in boards or []:
+                selected.add(f"{engine}:{board}")
+        return selected
+    if isinstance(current, list):
+        return {f"ats:{board}" for board in current if board in BOARD_CATALOG["ats"]}
+    return {
+        f"ats:{board}"
+        for board in ("greenhouse", "ashby", "lever", "workable")
+    }
+
+
+def _group_boards(values) -> dict:
+    grouped: dict = {}
+    for value in values or []:
+        engine, _, board = str(value).partition(":")
+        if engine not in BOARD_CATALOG or board not in BOARD_CATALOG[engine]:
+            continue
+        grouped.setdefault(engine, []).append(board)
+    return grouped
+
+
+def _ask_platforms(current=None):
+    """Let the user pick any board Sweepy can search, grouped by the engine behind it."""
+    selected = _selected_boards(current)
+    values = _ask(
+        questionary.checkbox(
+            "Which boards do you want to search? Pick from any engine; "
+            "downloaded engines are labeled.",
+            choices=_board_choices(selected),
+        )
+    )
+    grouped = _group_boards(values)
+    for engine, boards in grouped.items():
+        if engine in ("jobspy", "ats") or engine_status(engine)["installed"]:
+            continue
+        log.info(
+            "%s boards need the %s engine. Install it with: %s",
+            len(boards),
+            engine,
+            install_command([engine]),
+        )
+    return grouped
 
 
 def _ask_custom_platforms(current=None):
@@ -912,7 +968,21 @@ def _engine_details(name: str) -> str:
 def _ensure_engine_available(name: str) -> bool:
     """Offer to install a missing engine before its prompts run."""
     if engine_status(name)["installed"]:
+        for warning in conflict_warnings([name]):
+            log.warning(warning)
         return True
+
+    warnings = conflict_warnings([name])
+    for warning in warnings:
+        log.warning(warning)
+    if warnings and not _ask(
+        questionary.confirm(
+            f"Install {name} without its stale pin, keeping JobSpy's curl_cffi?", default=True
+        )
+    ):
+        log.info("Skipped %s. Its library stays out of this environment.", name)
+        return False
+
     download = _ask(
         questionary.confirm(
             f"{name} is not installed. Download it now with pip?", default=True
@@ -922,7 +992,7 @@ def _ensure_engine_available(name: str) -> bool:
         log.info("Skipped %s. Install it later with: %s", name, install_command([name]))
         return False
 
-    result = install_engines([name], echo=print).get(name, {})
+    result = install_engines([name], echo=print, allow_conflicts=bool(warnings)).get(name, {})
     if not result.get("installed"):
         log.warning("Could not install %s: %s", name, result.get("detail", "unknown error"))
         log.info("Retry with: %s", result.get("command") or install_command([name]))
@@ -965,18 +1035,29 @@ def _ask_proxies(current=None) -> List[str]:
     return [host]
 
 
-def _ask_jobspy(current=None) -> dict:
-    current = current or {}
-    selected = set(current.get("sites") or DEFAULT_JOBSPY_SITES)
-    sites = _ask(
+def _ask_board_set(engine: str, prompt: str, current, defaults) -> List[str]:
+    """Checkbox over one engine's boards, labeled with what the engine needs."""
+    boards = BOARD_CATALOG[engine]
+    selected = set(current or defaults)
+    chosen = _ask(
         questionary.checkbox(
-            "JobSpy boards:",
+            prompt,
             choices=[
-                questionary.Choice(board.title(), value=board, checked=board in selected)
-                for board in DEFAULT_JOBSPY_SITES
+                questionary.Choice(
+                    _board_choice_label(engine, label), value=key, checked=key in selected
+                )
+                for key, label in boards.items()
             ],
         )
-    ) or list(DEFAULT_JOBSPY_SITES)
+    )
+    return list(chosen) if chosen else list(defaults)
+
+
+def _ask_jobspy(current=None) -> dict:
+    current = current or {}
+    sites = _ask_board_set(
+        "jobspy", "JobSpy boards:", current.get("sites"), DEFAULT_JOBSPY_SITES
+    )
     descriptions = _ask(
         questionary.confirm(
             "Fetch full descriptions? (Slower, but scores need the posting text)",
@@ -1003,32 +1084,18 @@ def _ask_jobspy(current=None) -> dict:
 
 def _ask_hirehunt(current=None) -> dict:
     current = current or {}
-    selected = set(current.get("sources") or DEFAULT_HIREHUNT_SOURCES)
-    sources = _ask(
-        questionary.checkbox(
-            "HireHunt sources:",
-            choices=[
-                questionary.Choice(source.replace("_", " ").title(), value=source, checked=source in selected)
-                for source in DEFAULT_HIREHUNT_SOURCES
-            ],
-        )
-    ) or list(DEFAULT_HIREHUNT_SOURCES)
+    sources = _ask_board_set(
+        "hirehunt", "HireHunt sources:", current.get("sources"), DEFAULT_HIREHUNT_SOURCES
+    )
     log.info("HireHunt has no proxy hook, so proxy settings stay disabled.")
     return {"sources": sources}
 
 
 def _ask_jobdrop(current=None) -> dict:
     current = current or {}
-    selected = set(current.get("sites") or DEFAULT_JOBDROP_SITES)
-    sites = _ask(
-        questionary.checkbox(
-            "jobdrop boards:",
-            choices=[
-                questionary.Choice(board.replace("_", " ").title(), value=board, checked=board in selected)
-                for board in _JOBDROP_BOARDS
-            ],
-        )
-    ) or list(DEFAULT_JOBDROP_SITES)
+    sites = _ask_board_set(
+        "jobdrop", "jobdrop boards:", current.get("sites"), DEFAULT_JOBDROP_SITES
+    )
     headless = _ask(
         questionary.confirm("Run browser-backed boards headless?", default=bool(current.get("headless", True)))
     )
@@ -1046,30 +1113,22 @@ def _ask_jobdrop(current=None) -> dict:
     }
 
 
-def _ask_openroles(current=None) -> dict:
+def _ask_openroles(current=None) -> Optional[dict]:
     current = current or {}
-    selected = set(current.get("ats") or DEFAULT_OPENROLES_ATS)
-    ats = _ask(
-        questionary.checkbox(
-            "ATS platforms:",
-            choices=[
-                questionary.Choice(name.title(), value=name, checked=name in selected)
-                for name in DEFAULT_OPENROLES_ATS
-            ],
+    raw = _ask(
+        questionary.text(
+            "Company slugs, comma-separated (example: figma, stripe, notion; leave blank to skip OpenRoles):",
+            default=", ".join(current.get("companies") or []),
         )
-    ) or list(DEFAULT_OPENROLES_ATS)
+    ) or ""
+    companies = [company.strip() for company in raw.split(",") if company.strip()]
+    if not companies:
+        log.info("No company slugs provided; OpenRoles stays disabled.")
+        return None
 
-    companies: List[str] = []
-    while not companies:
-        raw = _ask(
-            questionary.text(
-                "Company slugs, comma-separated (example: figma, stripe, notion):",
-                default=", ".join(current.get("companies") or []),
-            )
-        ) or ""
-        companies = [company.strip() for company in raw.split(",") if company.strip()]
-        if not companies:
-            log.warning("openroles reads boards you name, so at least one company slug is required.")
+    ats = _ask_board_set(
+        "openroles", "ATS platforms:", current.get("ats"), DEFAULT_OPENROLES_ATS
+    )
     return {"ats": ats, "companies": companies}
 
 
@@ -1194,18 +1253,34 @@ def _manage_engines() -> None:
     """Show what each engine scrapes and install missing libraries on request."""
 
     def _report(results: dict) -> None:
+        installed = []
         for name, result in results.items():
             if result.get("installed"):
+                installed.append(name)
                 log.info("%s installed.", name)
             else:
                 log.warning("Could not install %s: %s", name, result.get("detail"))
                 log.info("Retry with: %s", result.get("command") or install_command([name]))
+        if installed:
+            log.info(
+                "Add %s to a profile from Sweepy's Toolbox > Manage job engines > "
+                "Choose engines and settings.",
+                ", ".join(installed),
+            )
 
     def apply_choice(action: str) -> None:
         if action == "Install all missing engines":
             targets = missing_engines()
+            skipped = [
+                name
+                for name in missing_engines(include_conflicting=True)
+                if name not in targets
+            ]
             if not targets:
-                log.info("Every engine is already installed.")
+                log.info("Every remaining engine is already installed.")
+                for name in skipped:
+                    for warning in conflict_warnings([name]):
+                        log.warning(warning)
                 return
             if not _ask(
                 questionary.confirm(
@@ -1214,20 +1289,34 @@ def _manage_engines() -> None:
             ):
                 return
             _report(install_engines(targets, echo=print))
+            for name in skipped:
+                for warning in conflict_warnings([name]):
+                    log.warning(warning)
             return
 
         if action == "Install one engine":
-            targets = missing_engines()
+            targets = missing_engines(include_conflicting=True)
             if not targets:
                 log.info("Every engine is already installed.")
                 return
             name = _menu("Which engine do you want to download?", targets)
             if name is None:
                 return
+            warnings = conflict_warnings([name])
+            for warning in warnings:
+                log.warning(warning)
+            if warnings and not _ask(
+                questionary.confirm(
+                    f"Install {name} without its stale pin, keeping JobSpy's curl_cffi?",
+                    default=True,
+                )
+            ):
+                log.info("Skipped %s.", name)
+                return
             if not _ask(questionary.confirm(f"Download {name} with pip now?", default=True)):
                 log.info("Run this later: %s", install_command([name]))
                 return
-            _report(install_engines([name], echo=print))
+            _report(install_engines([name], echo=print, allow_conflicts=bool(warnings)))
             return
 
         if action == "Show engine details":
@@ -1355,6 +1444,8 @@ def _collect(steps, seed=None):
 
 def _format_answer(step, value):
     if step.key == "platforms":
+        if isinstance(value, dict):
+            return _format_boards(value)
         return ", ".join(value) if value else "(none)"
     if step.key == "custom_platforms":
         return ", ".join(c["name"] for c in value) if value else "(none)"
@@ -1367,6 +1458,19 @@ def _format_answer(step, value):
     if value in (None, ""):
         return "(blank)"
     return str(value)
+
+
+def _format_boards(boards: dict) -> str:
+    parts = []
+    for engine, selected in boards.items():
+        if not selected:
+            continue
+        info = ENGINE_CATALOG.get(engine)
+        note = ""
+        if info is not None and not info.core:
+            note = "" if engine_status(engine)["installed"] else " (needs download)"
+        parts.append(f"{engine}{note}: {len(selected)}")
+    return ", ".join(parts) if parts else "(none)"
 
 
 def _print_summary(answers, steps):
@@ -1397,6 +1501,87 @@ def _format_orchestrator(value) -> str:
 
 _PLATFORM_KEYS = ("greenhouse", "ashby", "lever", "workable", "aggregators")
 
+_ATS_PLATFORM_KEYS = ("greenhouse", "ashby", "lever", "workable")
+
+_ENGINE_BOARD_FIELD = {
+    "jobspy": "sites",
+    "hirehunt": "sources",
+    "openroles": "ats",
+    "jobdrop": "sites",
+}
+
+
+def _boards_to_sources(boards: Optional[dict], base_sources: Optional[dict]) -> dict:
+    """Turn per-engine board selections into a ``sources`` block, keeping other keys.
+
+    ``boards`` maps an engine name to the board keys the user ticked. Anything the
+    picker does not cover, such as proxies or openroles companies, survives.
+    """
+    sources = copy.deepcopy(base_sources or {})
+    if not isinstance(boards, dict):
+        return sources
+
+    ats_boards = list(boards.get("ats") or [])
+
+    jobspy_boards = list(boards.get("jobspy") or [])
+    if jobspy_boards:
+        sources["jobspy"] = {**(sources.get("jobspy") or {}), "sites": jobspy_boards}
+
+    for key in ("greenhouse", "ashby", "lever", "workable"):
+        block = dict(sources.get(key) or {})
+        block["enabled"] = key in ats_boards
+        sources[key] = block
+    builtin = dict(sources.get("builtinnyc") or {})
+    builtin["enabled"] = "builtinnyc" in ats_boards
+    sources["builtinnyc"] = builtin
+
+    enabled: List[str] = []
+    if jobspy_boards:
+        enabled.append("jobspy")
+    if ats_boards:
+        enabled.append("ats")
+
+    for engine, field in _ENGINE_BOARD_FIELD.items():
+        if engine in ("jobspy",):
+            continue
+        selected = list(boards.get(engine) or [])
+        if not selected:
+            continue
+        sources[engine] = {**(sources.get(engine) or {}), field: selected}
+        enabled.append(engine)
+
+    if boards.get("apify"):
+        sources["apify"] = dict(sources.get("apify") or {})
+        enabled.append("apify")
+
+    invalid = validate_sources(
+        {engine: sources.get(engine, {}) for engine in enabled if engine not in ("jobspy", "ats")}
+    )
+    for error in invalid:
+        log.warning("Board selection needs attention: %s", error)
+    blocked = {
+        error.split(":", 1)[0].strip()
+        for error in invalid
+        if ":" in error
+    }
+    enabled = [engine for engine in enabled if engine not in blocked]
+
+    if enabled:
+        sources["enabled"] = enabled
+    return sources
+
+
+def _implied_boards(profile_data: Dict) -> dict:
+    """Board selections a profile already expresses, used to skip needless rewrites."""
+    runtime = normalize_sources(profile_data)
+    return _platform_answers(runtime, profile_data.get("platforms") or {})
+
+
+def _normalized_boards(boards) -> dict:
+    if not isinstance(boards, dict):
+        return {}
+    return {engine: sorted(selected or []) for engine, selected in boards.items()}
+
 
 def _parse_int(text: str) -> Optional[int]:
     """Parse a whole number such as '24' or '1,024'. Returns None on failure."""
@@ -1421,6 +1606,34 @@ def _parse_float(text: str) -> Optional[float]:
     return value if math.isfinite(value) else None
 
 
+def _platform_answers(runtime: dict, platforms: dict) -> dict:
+    """Collect the board selections shown by the platform picker, grouped by engine."""
+    engines = runtime["engines"]
+    boards: dict = {}
+
+    sites = list(engines["jobspy"].get("sites") or []) if "jobspy" in runtime["enabled"] else []
+    if sites:
+        boards["jobspy"] = sites
+
+    ats = [key for key in ("greenhouse", "ashby", "lever", "workable") if platforms.get(key)]
+    if engines["ats"].get("sources", {}).get("builtinnyc", {}).get("enabled", True):
+        ats.append("builtinnyc")
+    if ats:
+        boards["ats"] = ats
+
+    for engine in ("hirehunt", "openroles", "jobdrop"):
+        if engine not in runtime["enabled"]:
+            continue
+        field = _ENGINE_BOARD_FIELD[engine]
+        selected = list(engines[engine].get(field) or [])
+        if selected:
+            boards[engine] = selected
+
+    if "apify" in runtime["enabled"]:
+        boards["apify"] = ["actor"]
+    return boards
+
+
 def _answers_from_profile(profile_data: Dict) -> Dict:
     """Flatten a profile dict into the wizard's answer keys."""
     search = profile_data.get("search") or {}
@@ -1428,7 +1641,6 @@ def _answers_from_profile(profile_data: Dict) -> Dict:
     platforms = profile_data.get("platforms") or {}
     export = profile_data.get("export") or {}
     formats = [f.strip() for f in str(export.get("format", "pdf,csv")).split(",") if f.strip()]
-    enabled = [key for key in _PLATFORM_KEYS if platforms.get(key)]
     runtime = normalize_sources(profile_data)
     engine_answers = {"enabled": list(runtime["enabled"])}
     for name in ("jobspy", "hirehunt", "openroles", "jobdrop", "apify"):
@@ -1441,7 +1653,7 @@ def _answers_from_profile(profile_data: Dict) -> Dict:
         "include_hybrid": bool(search.get("include_hybrid", True)),
         "resume_path": resume.get("path", ""),
         "min_salary": search.get("min_salary", 0),
-        "platforms": enabled,
+        "platforms": _platform_answers(runtime, platforms),
         "custom_platforms": [dict(c) for c in (platforms.get("custom") or [])],
         "sources": engine_answers,
         "orchestrator": {
@@ -1486,9 +1698,17 @@ def _merge_answers(profile_data: Dict, answers: Dict) -> Dict:
     merged["resume"] = resume
 
     platforms = dict(merged.get("platforms") or {})
-    selected = answers.get("platforms") or []
-    for key in _PLATFORM_KEYS:
-        platforms[key] = key in selected
+    boards = answers.get("platforms")
+    if isinstance(boards, dict):
+        ats_boards = list(boards.get("ats") or [])
+        for key in _ATS_PLATFORM_KEYS:
+            platforms[key] = key in ats_boards
+        if _normalized_boards(boards) != _normalized_boards(_implied_boards(profile_data)):
+            merged["sources"] = _boards_to_sources(boards, merged.get("sources") or {})
+    else:
+        selected = boards or []
+        for key in _PLATFORM_KEYS:
+            platforms[key] = key in selected
     custom = answers.get("custom_platforms") or []
     if custom:
         platforms["custom"] = custom
@@ -1503,7 +1723,7 @@ def _merge_answers(profile_data: Dict, answers: Dict) -> Dict:
 
     report = dict(merged.get("report") or {})
     report.setdefault("style", "cards")
-    report.setdefault("cards_per_page", 4)
+    report.setdefault("cards_per_page", 6)
     report.setdefault("max_cards", 24)
     merged["report"] = report
 
@@ -1544,11 +1764,11 @@ MENU_EXIT = "Exit"
 MENU_TOOLBOX = "Open the toolbox"
 
 _MENU_TILES = [
-    ("01", "LAUNCH SWEEP", "Search enabled sources", MENU_RUN),
-    ("02", "BUILD PROFILE", "Set up a new job search", MENU_CREATE),
-    ("03", "LOAD PROFILE", "Choose a saved job search", MENU_LOAD),
-    ("04", "TUNE SEARCH", "Scoring and reports", MENU_SCALING),
-    ("05", "OPEN TOOLBOX", "Edits, tools and settings", MENU_TOOLBOX),
+    ("01", "LAUNCH SWEEP", "Run your job search now", MENU_RUN),
+    ("04", "BUILD PROFILE", "Set up your job search", MENU_CREATE),
+    ("02", "LOAD PROFILE", "Open a search you saved", MENU_LOAD),
+    ("05", "SWEEP SETTINGS", "Ranking, cards, history", MENU_SCALING),
+    ("03", "SWEEPY'S TOOLBOX", "Edit profile, logs, help", MENU_TOOLBOX),
     ("06", "EXIT SWEEPY", "Save changes and close", MENU_EXIT),
 ]
 
@@ -1557,6 +1777,8 @@ _SCALING_CHOICES = [
     "Maximum cards (report.max_cards)",
     "Cards per page (report.cards_per_page)",
     "Report style (report.style)",
+    "Skip previously reported postings (history)",
+    "History retention in days (history.retention_days)",
 ]
 
 _AGGREGATOR_CHOICES = [
@@ -1690,7 +1912,14 @@ def _review_answers(
             _run_action(_manage_engines)
             continue
         if action == MENU_SOURCES:
-            current = answers.get("sources") or _engine_defaults(defaults)
+            current = answers.get("sources")
+            if not current:
+                if isinstance(answers.get("platforms"), dict):
+                    current = _boards_to_sources(
+                        answers["platforms"], (defaults or {}).get("sources") or {}
+                    )
+                else:
+                    current = _engine_defaults(defaults)
             edited = _ask_engines(current)
             if edited is not None:
                 answers["sources"] = edited
@@ -1888,7 +2117,7 @@ def _edit_scaling(profile_data: Dict) -> bool:
                 raw = _ask(
                     questionary.text(
                         "Cards per page (1 or higher):",
-                        default=str(report.get("cards_per_page", 4)),
+                        default=str(report.get("cards_per_page", 6)),
                     )
                 )
                 value = _parse_int(raw)
@@ -1908,14 +2137,51 @@ def _edit_scaling(profile_data: Dict) -> bool:
             if style is not None:
                 report["style"] = style
                 changed = True
+        if action.startswith("Skip previously"):
+            current = profile_data.get("history") or {}
+            enabled = _ask(
+                questionary.confirm(
+                    "Skip postings reported in an earlier sweep?",
+                    default=bool(current.get("enabled", True)),
+                )
+            )
+            if enabled is not None:
+                history = dict(current)
+                history["enabled"] = bool(enabled)
+                profile_data["history"] = history
+                changed = True
+        if action.startswith("History retention"):
+            current = profile_data.get("history") or {}
+            while True:
+                raw = _ask(
+                    questionary.text(
+                        "History retention in days (0 reports every posting again):",
+                        default=str(current.get("retention_days", 4)),
+                    )
+                )
+                value = _parse_int(raw)
+                if value is not None and value >= 0:
+                    history = dict(current)
+                    history["retention_days"] = value
+                    profile_data["history"] = history
+                    changed = True
+                    return
+                log.warning("Enter a whole number 0 or higher.")
 
     while True:
+        history_cfg = profile_data.get("history") or {}
+        history_state = (
+            "off"
+            if history_cfg.get("enabled", True) is False
+            else f"on, {history_cfg.get('retention_days', 4)} days"
+        )
         log.info(
-            "  Keyword weight %s | Max cards %s | Cards per page %s | Report style %s",
+            "  Keyword weight %s | Max cards %s | Cards per page %s | Report style %s | History %s",
             resume.get("keywords_weight", 1.5),
             report.get("max_cards", 24),
-            report.get("cards_per_page", 4),
+            report.get("cards_per_page", 6),
             report.get("style", "cards"),
+            history_state,
         )
         action = _menu(
             "Which scaling setting do you want to change?", _SCALING_CHOICES
@@ -2057,7 +2323,7 @@ def _run_toolbox(
     to close.
     """
     while True:
-        action = _menu("Open the toolbox:", _toolbox_choices())
+        action = _menu("Sweepy's Toolbox:", _toolbox_choices())
         if action is None:
             return profile_data, working_path, dirty, False
 

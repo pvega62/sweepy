@@ -25,6 +25,7 @@ EXPORT_COLUMNS = [
     'min_amount',
     'max_amount',
     'currency',
+    'salary_period',
     'comp',
     'benefits',
     'has_extended_response',

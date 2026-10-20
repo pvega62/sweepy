@@ -40,5 +40,6 @@ class AtsAdapter(ScraperAdapter):
             query.get("include_hybrid", True),
             query.get("min_salary", 0),
             platforms=cfg["platforms"],
+            deduplicate=query.get("deduplicate", True),
         )
         return pd.DataFrame(jobs)

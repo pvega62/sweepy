@@ -61,7 +61,7 @@ sources:
 
 report:
   style: "cards"
-  cards_per_page: 4
+  cards_per_page: 6
   max_cards: 24
   destinations: []
 

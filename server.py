@@ -5,9 +5,10 @@ Provides standard MCP tools (stdio transport) for LLMs (Claude, Antigravity, etc
 to automate job board discovery, profile generation, and match scoring.
 
 Stream discipline: the MCP protocol travels over stdout, so nothing in this module or
-the engine may write to stdout. All engine output uses the `logging` module. This server
-does not attach a handler to the "sweepy" logger, so engine INFO records are silently
-dropped; only "sweepy.server" logs (startup + expected warnings) go to stderr. A
+the engine may write to stdout. All engine output uses the `logging` module. The `run_sweep`
+tool attaches a debug file handler to the "sweepy" logger, so pipeline records go to a
+timestamped log without writing to the MCP stdout stream. Other engine INFO records remain
+silent; only "sweepy.server" logs (startup + expected warnings) go to stderr. A
 `_quiet_stdout()` guard wraps engine calls that historically used `print()`, as a redundant safeguard.
 
 Sandbox: `create_profile` and `export_report` write only inside `_WORKSPACE` (set via the
@@ -15,13 +16,18 @@ Sandbox: `create_profile` and `export_report` write only inside `_WORKSPACE` (se
 `SWEEPY_ALLOW_EXTERNAL_WRITES=1` (or `true`/`yes`/`on`) to disable the boundary check.
 """
 
+import asyncio
 import contextlib
 import glob
 import json
 import logging
 import os
+import queue
 import re
 import sys
+import threading
+import time
+import uuid
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 from typing import List, Optional
@@ -46,16 +52,18 @@ log = logging.getLogger("sweepy.server")
 # Import engine modules under a stdout redirect so any stray print() at import time
 # cannot corrupt the JSON-RPC stream before mcp.run() starts.
 with contextlib.redirect_stdout(sys.stderr):
-    import anyio
-
-    from engine.config import save_profile
+    from engine.config import load_config, save_profile
     from engine.documents import convert_to_pdf
     from engine.docx import convert_docx_to_pdf
+    from engine.engine_defaults import DEFAULT_HISTORY
+    from engine.engines import ENGINE_CATALOG, engine_status
     from engine.exporter import export_to_csv, export_to_json, export_to_png
+    from engine.history import SweepHistory, history_scope
+    from engine.logging import enable_debug_logging
     from engine.pdf_builder import build_pdf
     from engine.report import build_report
     from engine.session import SweepSession, stable_id
-    from engine.sweep_config import normalize_sources, validate_sources
+    from engine.sweep_config import default_engine_config, normalize_sources, validate_sources
     from swee import run_sweep_pipeline
 
 mcp = FastMCP("sweepy")
@@ -71,8 +79,31 @@ _EXPECTED = (FileNotFoundError, ValueError, IsADirectoryError, PermissionError)
 _session = SweepSession()
 _session_profile: dict = {}
 _session_dir: Optional[str] = None
+# Remembers the history bucket of the last sweep so clear_history() needs no arguments.
+_last_history: dict = {"scope": None, "config": {}}
 
 _SESSION_FILENAME = "report_session.json"
+
+
+def _default_mcp_sources_config() -> tuple[dict, dict]:
+    enabled = [name for name, info in ENGINE_CATALOG.items() if info.core]
+    not_enabled = {}
+    for name, info in ENGINE_CATALOG.items():
+        if info.core:
+            continue
+        if name == "apify":
+            not_enabled[name] = "Requires explicit opt-in because the service may incur charges."
+            continue
+        status = engine_status(name)
+        if not status["installed"]:
+            not_enabled[name] = status["detail"]
+            continue
+        errors = validate_sources({name: default_engine_config(name)})
+        if errors:
+            not_enabled[name] = "; ".join(errors)
+            continue
+        enabled.append(name)
+    return {"enabled": enabled}, not_enabled
 
 
 def _allow_external_writes() -> bool:
@@ -115,6 +146,87 @@ def _default_profile_path(profile_data: dict) -> str:
     safe_name = re.sub(r'[^a-zA-Z0-9]+', '_', name).strip('_').lower()
     safe_title = re.sub(r'[^a-zA-Z0-9]+', '_', first_title).strip('_').lower()
     return os.path.join("profiles", f"{safe_name}_{safe_title}.yaml")
+
+
+def _validate_runtime_config(
+    cache_config: Optional[dict],
+    orchestrator_config: Optional[dict],
+    history_config: Optional[dict] = None,
+) -> None:
+    if history_config is not None:
+        if not isinstance(history_config, dict):
+            raise ValueError("history_config must be an object")
+        unknown = set(history_config) - {"enabled", "retention_days", "match", "path"}
+        if unknown:
+            raise ValueError(
+                "Unsupported history_config field(s): " + ", ".join(sorted(unknown))
+            )
+        if "enabled" in history_config and type(history_config["enabled"]) is not bool:
+            raise ValueError("history_config.enabled must be a boolean")
+        days = history_config.get("retention_days")
+        if days is not None and (type(days) is not int or days < 0):
+            raise ValueError(
+                "history_config.retention_days must be a non-negative integer"
+            )
+        match = history_config.get("match")
+        if match is not None and match not in ("url", "url+role"):
+            raise ValueError("history_config.match must be 'url' or 'url+role'")
+        path = history_config.get("path")
+        if path is not None and (not isinstance(path, str) or not path.strip()):
+            raise ValueError("history_config.path must be a non-empty string or null")
+
+    if cache_config is not None:
+        if not isinstance(cache_config, dict):
+            raise ValueError("cache_config must be an object")
+        unknown = set(cache_config) - {"enabled", "ttl_seconds"}
+        if unknown:
+            raise ValueError(
+                "Unsupported cache_config field(s): " + ", ".join(sorted(unknown))
+            )
+        if "enabled" in cache_config and type(cache_config["enabled"]) is not bool:
+            raise ValueError("cache_config.enabled must be a boolean")
+        ttl = cache_config.get("ttl_seconds")
+        if ttl is not None and (type(ttl) is not int or ttl < 0):
+            raise ValueError("cache_config.ttl_seconds must be a non-negative integer")
+
+    if orchestrator_config is not None:
+        if not isinstance(orchestrator_config, dict):
+            raise ValueError("orchestrator_config must be an object")
+        unknown = set(orchestrator_config) - {
+            "timeout_per_source_seconds",
+            "circuit_breaker",
+        }
+        if unknown:
+            raise ValueError(
+                "Unsupported orchestrator_config field(s): "
+                + ", ".join(sorted(unknown))
+            )
+        timeout = orchestrator_config.get("timeout_per_source_seconds")
+        if timeout is not None and (type(timeout) is not int or timeout < 1):
+            raise ValueError(
+                "orchestrator_config.timeout_per_source_seconds must be a positive integer"
+            )
+
+        breaker = orchestrator_config.get("circuit_breaker")
+        if breaker is not None:
+            if not isinstance(breaker, dict):
+                raise ValueError("orchestrator_config.circuit_breaker must be an object")
+            unknown = set(breaker) - {"failure_threshold", "cooldown_seconds"}
+            if unknown:
+                raise ValueError(
+                    "Unsupported circuit_breaker field(s): "
+                    + ", ".join(sorted(unknown))
+                )
+            threshold = breaker.get("failure_threshold")
+            if threshold is not None and (type(threshold) is not int or threshold < 1):
+                raise ValueError(
+                    "circuit_breaker.failure_threshold must be a positive integer"
+                )
+            cooldown = breaker.get("cooldown_seconds")
+            if cooldown is not None and (type(cooldown) is not int or cooldown < 0):
+                raise ValueError(
+                    "circuit_breaker.cooldown_seconds must be a non-negative integer"
+                )
 
 
 def _latest_sweep_json(results_dir: str, profile_stem: Optional[str]) -> Optional[str]:
@@ -182,6 +294,237 @@ def _sorted_cards() -> List[dict]:
     return cards
 
 
+# ---------------------------------------------------------------------------
+# Background sweep jobs
+#
+# A live sweep needs minutes of board scraping, which outlives many client tool
+# timeouts. The pipeline therefore runs on its own thread, and tool calls only
+# ever wait for a bounded slice of it. A disconnected client cannot cancel the
+# work, and a later call picks the job back up from the registry.
+# ---------------------------------------------------------------------------
+
+_SWEEP_JOBS: dict[str, "_SweepJob"] = {}
+_SWEEP_JOB_HISTORY = 5
+_SWEEP_POLL_SECONDS = 0.1
+# Hosts abort long tool calls, so no request waits longer than this by default.
+_DEFAULT_WAIT_SECONDS = 45.0
+_MAX_WAIT_SECONDS = 600.0
+
+
+class _SweepJob:
+    """Mutable state for one pipeline run shared by a worker thread and tool calls."""
+
+    def __init__(
+        self,
+        profile_path: Optional[str],
+        deduplicate: bool,
+        include_seen: bool,
+        debug_log: Optional[str],
+    ):
+        self.id = uuid.uuid4().hex[:12]
+        self.profile_path = profile_path
+        self.deduplicate = deduplicate
+        self.include_seen = include_seen
+        self.debug_log = debug_log
+        self.status = "running"
+        self.result: Optional[dict] = None
+        self.error: Optional[str] = None
+        self.progress = {"step": 0, "total": 0, "label": "Starting"}
+        self.started_at = time.monotonic()
+        self.finished_at: Optional[float] = None
+        self._updates: "queue.Queue[tuple]" = queue.Queue()
+
+    def record_progress(self, current: int, total: int, label: str) -> None:
+        self._updates.put((current, total, label))
+
+    def drain_progress(self) -> List[tuple]:
+        updates = []
+        while True:
+            try:
+                updates.append(self._updates.get_nowait())
+            except queue.Empty:
+                return updates
+
+    @property
+    def elapsed_seconds(self) -> float:
+        end = self.finished_at if self.finished_at is not None else time.monotonic()
+        return round(end - self.started_at, 1)
+
+
+def _prune_sweep_jobs() -> None:
+    finished = [job for job in _SWEEP_JOBS.values() if job.status != "running"]
+    finished.sort(key=lambda job: job.finished_at or 0.0)
+    for job in finished[: max(0, len(finished) - _SWEEP_JOB_HISTORY)]:
+        _SWEEP_JOBS.pop(job.id, None)
+
+
+def _apply_sweep_result(job: "_SweepJob") -> None:
+    """Adopt a finished job's cards as the live session so later tools see them."""
+    global _session, _session_profile, _session_dir, _last_history
+    results = job.result or {}
+    _session = SweepSession()
+    _session.set_many(results.get("cards", []) or [])
+    _session_profile = results.get("profile", {}) or {}
+    _session_dir = results.get("output_dir")
+    scope = results.get("history_scope")
+    if scope:
+        _last_history = {
+            "scope": scope,
+            "config": dict((results.get("profile") or {}).get("history") or {}),
+        }
+    _persist_session(_session_dir)
+
+
+def _run_sweep_job(job: "_SweepJob") -> None:
+    """Worker-thread body: run the pipeline and publish its outcome on the job."""
+    try:
+        with _quiet_stdout():
+            job.result = run_sweep_pipeline(
+                profile_path=job.profile_path,
+                verbose=True,
+                progress=job.record_progress,
+                deduplicate=job.deduplicate,
+                include_seen=job.include_seen,
+                execution_method="mcp",
+            )
+        # Adopt the cards before announcing completion so a waiting tool call
+        # never reads an empty session.
+        _apply_sweep_result(job)
+        job.status = "completed"
+        log.info("MCP run_sweep completed (job=%s)", job.id)
+    except _EXPECTED as exc:
+        job.error = str(exc)
+        job.status = "failed"
+        log.warning("%s: %s", type(exc).__name__, exc)
+    except BaseException as exc:  # a broken sweep must not strand the job
+        job.error = str(exc)
+        job.status = "failed"
+        log.exception("run_sweep job %s failed", job.id)
+    finally:
+        job.finished_at = time.monotonic()
+
+
+def _start_sweep_job(
+    profile_path: Optional[str],
+    deduplicate: bool,
+    include_seen: bool,
+    debug_log: Optional[str],
+) -> "_SweepJob":
+    for job in _SWEEP_JOBS.values():
+        if (
+            job.status == "running"
+            and job.profile_path == profile_path
+            and job.deduplicate == deduplicate
+            and job.include_seen == include_seen
+        ):
+            log.info("Reusing running sweep job %s", job.id)
+            return job
+    job = _SweepJob(profile_path, deduplicate, include_seen, debug_log)
+    _SWEEP_JOBS[job.id] = job
+    _prune_sweep_jobs()
+    log.info("MCP run_sweep started (job=%s, profile=%s, debug_log=%s)",
+             job.id, profile_path or "default profile", debug_log)
+    threading.Thread(
+        target=_run_sweep_job, args=(job,), name=f"sweepy-{job.id}", daemon=True
+    ).start()
+    return job
+
+
+async def _await_sweep_job(job: "_SweepJob", wait_seconds: float, ctx: Context) -> None:
+    """Wait at most ``wait_seconds`` for the job, forwarding progress notifications."""
+    deadline = time.monotonic() + max(0.0, float(wait_seconds))
+    while True:
+        for step, total, label in job.drain_progress():
+            job.progress = {"step": step, "total": total, "label": label}
+            if ctx is not None:
+                try:
+                    await ctx.report_progress(float(step), float(total), label)
+                except Exception:  # progress is advisory only
+                    log.debug("Progress notification failed", exc_info=True)
+        if job.status != "running":
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(_SWEEP_POLL_SECONDS, remaining))
+
+
+def _clamp_wait(wait_seconds) -> float:
+    """Bound a tool-call wait so no request outlives the client's timeout.
+
+    ``SWEEPY_MCP_WAIT_SECONDS`` lowers the ceiling for hosts with tighter limits.
+    """
+    try:
+        value = _DEFAULT_WAIT_SECONDS if wait_seconds is None else float(wait_seconds)
+    except (TypeError, ValueError):
+        value = _DEFAULT_WAIT_SECONDS
+    ceiling = _MAX_WAIT_SECONDS
+    configured = os.environ.get("SWEEPY_MCP_WAIT_SECONDS", "").strip()
+    if configured:
+        try:
+            parsed = float(configured)
+        except ValueError:
+            parsed = 0.0
+        if parsed > 0:
+            ceiling = min(ceiling, parsed)
+    return max(0.0, min(value, ceiling))
+
+
+def _latest_sweep_job() -> Optional["_SweepJob"]:
+    running = [job for job in _SWEEP_JOBS.values() if job.status == "running"]
+    if running:
+        return max(running, key=lambda job: job.started_at)
+    if not _SWEEP_JOBS:
+        return None
+    return max(
+        _SWEEP_JOBS.values(),
+        key=lambda job: job.finished_at if job.finished_at is not None else job.started_at,
+    )
+
+
+def _sweep_payload(job: "_SweepJob") -> str:
+    """Render a job as the run_sweep status payload for any wait duration."""
+    if job.status == "failed":
+        return _err(job.error or "The sweep failed.", job_id=job.id, sweep_status="failed")
+    if job.status == "running":
+        return _ok(
+            sweep_status="running",
+            job_id=job.id,
+            progress=job.progress,
+            elapsed_seconds=job.elapsed_seconds,
+            debug_log=job.debug_log,
+            message=(
+                "The sweep is still running. Call get_sweep_status to wait for it, "
+                "then continue with get_jobs."
+            ),
+        )
+    results = job.result or {}
+    previously_seen = results.get("previously_seen_count") or 0
+    message = results.get("message")
+    if not message and previously_seen and not results.get("active_count"):
+        message = (
+            f"No new postings since the last sweep ({previously_seen} already reported). "
+            "Call run_sweep with include_seen=true to review them."
+        )
+    return _ok(
+        sweep_status="completed",
+        job_id=job.id,
+        discovered_count=results.get("discovered_count"),
+        new_count=results.get("new_count"),
+        previously_seen_count=previously_seen,
+        active_count=results.get("active_count"),
+        top_match=results.get("top_match"),
+        reports=results.get("reports"),
+        debug_log=job.debug_log,
+        top_roles=results.get("top_roles", [])[:5],
+        job_ids=[c["id"] for c in _sorted_cards()],
+        card_count=len(results.get("cards", []) or []),
+        skipped_sources=results.get("skipped_sources", []),
+        elapsed_seconds=job.elapsed_seconds,
+        message=message,
+    )
+
+
 def _ok(**fields) -> str:
     payload = {"status": "ok"}
     payload.update(fields)
@@ -212,6 +555,9 @@ def create_profile(
     synonyms: Optional[list] = None,
     platforms: Optional[dict] = None,
     sources_config: Optional[dict] = None,
+    cache_config: Optional[dict] = None,
+    orchestrator_config: Optional[dict] = None,
+    history_config: Optional[dict] = None,
     output_filename: Optional[str] = None
 ) -> str:
     """
@@ -233,6 +579,13 @@ def create_profile(
         sources_config: Optional dictionary merged into the profile's ``sources`` block,
             such as {"enabled": ["jobspy", "openroles"], "openroles": {"companies": ["figma"]}}.
             Every enabled engine passes validation before the file is written.
+        cache_config: Optional cache settings: ``enabled`` and ``ttl_seconds``.
+        orchestrator_config: Optional orchestration settings: ``timeout_per_source_seconds``
+            and ``circuit_breaker`` with ``failure_threshold`` and ``cooldown_seconds``.
+        history_config: Optional cross-run settings: ``enabled``, ``retention_days``
+            (default 4), ``match`` (``url`` or ``url+role``), and ``path`` (default
+            ``~/.sweepy/history.db``). Controls whether a sweep skips postings the user
+            already received.
         output_filename: Optional custom YAML path (defaults to profiles/{name}_{title}.yaml).
 
     Returns:
@@ -243,6 +596,8 @@ def create_profile(
             raise ValueError("name must be a non-empty string")
         if not titles:
             raise ValueError("titles must be a non-empty list")
+
+        _validate_runtime_config(cache_config, orchestrator_config, history_config)
 
         resolved_resume = _resolve_read_path(resume_path, must_exist=True)
         if not resolved_resume.lower().endswith((".pdf", ".docx")):
@@ -282,6 +637,13 @@ def create_profile(
         }
         if synonyms:
             profile_data["resume"]["synonyms"] = synonyms
+        if cache_config is not None:
+            profile_data["cache"] = dict(cache_config)
+        if orchestrator_config is not None:
+            profile_data["orchestrator"] = dict(orchestrator_config)
+        if history_config is not None:
+            profile_data["history"] = dict(history_config)
+        engine_notes = {}
         if sources_config:
             profile_data["sources"] = dict(sources_config)
             runtime = normalize_sources(profile_data)
@@ -290,6 +652,9 @@ def create_profile(
             )
             if errors:
                 raise ValueError("Invalid sources_config: " + "; ".join(errors))
+        else:
+            profile_data["sources"], engine_notes = _default_mcp_sources_config()
+            runtime = normalize_sources(profile_data)
 
         target_path = (
             _safe_output_path(output_filename)
@@ -298,7 +663,11 @@ def create_profile(
         )
         with _quiet_stdout():
             saved_path = save_profile(profile_data, target_path)
-        return _ok(profile_path=saved_path)
+        return _ok(
+            profile_path=saved_path,
+            enabled_engines=runtime["enabled"],
+            engines_not_enabled=engine_notes,
+        )
     except _EXPECTED as exc:
         log.warning("%s: %s", type(exc).__name__, exc)
         return _err(str(exc))
@@ -316,6 +685,9 @@ def create_profile(
 async def run_sweep(
     profile_path: Optional[str] = None,
     ctx: Context = None,
+    deduplicate: bool = True,
+    include_seen: bool = False,
+    wait_seconds: int = 45,
 ) -> str:
     """
     Executes a 5-stage job sweep pipeline using a specified profile or the default profile.
@@ -326,54 +698,157 @@ async def run_sweep(
     role, and render_report. Stop after this tool only when the user asks for keyword-only
     results or the available evidence does not support responsible LLM assessment.
 
-    This call may take several minutes: live board scraping and uptime verification run in
-    a worker thread while progress notifications are forwarded to the client.
+    Treat the results as a useful but non-exhaustive candidate set. Inspect
+    skipped_sources and report failures. A URL check blocked by rate limiting or
+    bot protection does not prove a posting is dead. When search tools are available,
+    verify promising listings against employer or ATS pages and add verified omissions
+    with import_jobs; never invent postings or claim exhaustive coverage.
+
+    A live sweep takes minutes, so it runs in the background. This tool waits at most
+    `wait_seconds`, which keeps the request inside the client's tool timeout. When the
+    sweep needs longer it returns `sweep_status: "running"` with a `job_id`; call
+    get_sweep_status until it reports `sweep_status: "completed"`. The sweep keeps going
+    even if the client disconnects.
+
+    By default the sweep reports only postings the user has not received before.
+    Postings recorded in an earlier sweep stay hidden for the profile's
+    `history.retention_days` (4 by default). When every discovered posting is a
+    repeat, the payload reports `previously_seen_count` and no new cards.
 
     Args:
-        profile_path: Optional path to the profile YAML. If omitted, uses default profile or config.sample.yaml.
+        profile_path: Optional path to the profile YAML. If omitted, uses the last saved
+            profile, then the first conventional profile on disk.
+        deduplicate: Remove repeated URLs and matching postings from different boards for this run. Defaults to True.
+        include_seen: Report previously seen postings too, refreshing their history. Defaults to False.
+        wait_seconds: Longest time to block before returning progress (default 45, clamped to 0..600).
+            Hosts with tighter limits can set `SWEEPY_MCP_WAIT_SECONDS` to lower the cap.
 
     Returns:
-        JSON string summarizing active roles found, top matches, and generated report paths.
+        JSON string reporting `sweep_status`, plus the active role count, the number of
+        new and previously seen postings, top matches, generated report paths, and the
+        debug log path once the sweep completes.
     """
-    def _progress(current: int, total: int, label: str) -> None:
-        if ctx is not None:
-            anyio.from_thread.run(ctx.report_progress, float(current), float(total), label)
-
     try:
         resolved = _resolve_read_path(profile_path, must_exist=True) if profile_path else None
-
-        def _worker() -> dict:
-            return run_sweep_pipeline(profile_path=resolved, verbose=False, progress=_progress)
-
-        with _quiet_stdout():
-            results = await anyio.to_thread.run_sync(_worker)
-
-        global _session, _session_profile, _session_dir
-        cards = results.get("cards", []) or []
-        _session = SweepSession()
-        _session.set_many(cards)
-        _session_profile = results.get("profile", {}) or {}
-        output_dir = results.get("output_dir")
-        _session_dir = output_dir
-        if output_dir:
-            _persist_session(output_dir)
-
-        summary = {
-            "discovered_count": results.get("discovered_count"),
-            "active_count": results.get("active_count"),
-            "top_match": results.get("top_match"),
-            "reports": results.get("reports"),
-            "top_roles": results.get("top_roles", [])[:5],
-            "job_ids": [c["id"] for c in _sorted_cards()],
-            "card_count": len(cards),
-            "skipped_sources": results.get("skipped_sources", []),
-        }
-        return _ok(**summary)
+        debug_log = enable_debug_logging()
+        job = _start_sweep_job(resolved, bool(deduplicate), bool(include_seen), debug_log)
+        await _await_sweep_job(job, _clamp_wait(wait_seconds), ctx)
+        return _sweep_payload(job)
     except _EXPECTED as exc:
         log.warning("%s: %s", type(exc).__name__, exc)
         return _err(str(exc))
     except Exception as exc:
         log.exception("run_sweep failed")
+        return _err(str(exc))
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+async def get_sweep_status(
+    job_id: Optional[str] = None,
+    wait_seconds: int = 45,
+    ctx: Context = None,
+) -> str:
+    """
+    Reports or waits on a sweep started by run_sweep.
+
+    Call this when run_sweep returned `sweep_status: "running"`. Repeat it until it
+    returns `sweep_status: "completed"`, then inspect the roles with get_jobs. Each call
+    blocks for at most `wait_seconds`, so no single request outlives the client timeout.
+
+    Args:
+        job_id: Job id from run_sweep. Defaults to the most recent sweep job.
+        wait_seconds: Longest time to block before returning progress (default 45, clamped to 0..600).
+
+    Returns:
+        JSON string with `sweep_status` and, once the sweep finishes, the same summary
+        fields run_sweep reports.
+    """
+    try:
+        job = _SWEEP_JOBS.get(job_id) if job_id else _latest_sweep_job()
+        if job is None:
+            if job_id:
+                return _err(f"Unknown sweep job {job_id!r}. Start one with run_sweep.")
+            return _err("No sweep job found. Start one with run_sweep.")
+        await _await_sweep_job(job, _clamp_wait(wait_seconds), ctx)
+        return _sweep_payload(job)
+    except _EXPECTED as exc:
+        log.warning("%s: %s", type(exc).__name__, exc)
+        return _err(str(exc))
+    except Exception as exc:
+        log.exception("get_sweep_status failed")
+        return _err(str(exc))
+
+
+def _history_config_for_stem(profile_stem: str) -> dict:
+    """Read a profile's history settings from profiles/, when the file exists."""
+    for suffix in (".yaml", ".yml"):
+        candidate = _resolve_read_path(
+            os.path.join("profiles", f"{profile_stem}{suffix}"), must_exist=False
+        )
+        if os.path.exists(candidate):
+            return normalize_sources(load_config(candidate)).get("history") or {}
+    return {}
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def clear_history(
+    profile_path: Optional[str] = None,
+    profile_stem: Optional[str] = None,
+) -> str:
+    """
+    Forgets the postings Sweepy already reported so the next sweep can report them again.
+
+    Histories are per profile. Pass `profile_path` or `profile_stem` to clear a specific
+    profile, or call with neither after a sweep to clear the profile that sweep used.
+
+    Args:
+        profile_path: Optional path to the profile YAML.
+        profile_stem: Optional profile identifier, such as 'pedro_writer'.
+
+    Returns:
+        JSON string with the cleared scope, the number of forgotten postings, and how
+        many remain.
+    """
+    try:
+        if profile_path:
+            resolved = _resolve_read_path(profile_path, must_exist=True)
+            scope = history_scope(os.path.splitext(os.path.basename(resolved))[0])
+            config = normalize_sources(load_config(resolved)).get("history") or {}
+        elif profile_stem:
+            scope = history_scope(profile_stem)
+            config = _history_config_for_stem(profile_stem)
+        else:
+            scope = _last_history.get("scope")
+            config = dict(_last_history.get("config") or {})
+            if not scope:
+                return _err(
+                    "No sweep history is loaded. Pass profile_path or profile_stem."
+                )
+
+        store = SweepHistory(
+            path=config.get("path"),
+            retention_days=config.get(
+                "retention_days", DEFAULT_HISTORY["retention_days"]
+            ),
+            match=config.get("match", DEFAULT_HISTORY["match"]),
+        )
+        cleared = store.clear(scope)
+        return _ok(scope=scope, cleared=cleared, remaining=store.stats(scope)["count"])
+    except _EXPECTED as exc:
+        log.warning("%s: %s", type(exc).__name__, exc)
+        return _err(str(exc))
+    except Exception as exc:
+        log.exception("clear_history failed")
         return _err(str(exc))
 
 
@@ -666,13 +1141,28 @@ def get_jobs(
         limit: Optional number of cards to return (None returns all).
 
     Returns:
-        JSON string with the list of card records.
+        JSON string with the list of card records. When a sweep is still running, the
+        payload also reports `sweep_status`, `running_job_id`, and its progress, because
+        the cards predate that sweep.
     """
     try:
         _resolve_session(results_dir, profile_stem)
         cards = _sorted_cards()
         if limit is not None:
             cards = cards[: max(1, int(limit))]
+        running = [job for job in _SWEEP_JOBS.values() if job.status == "running"]
+        if running:
+            # These cards predate the sweep in flight; say so rather than letting
+            # the caller present stale matches.
+            newest = max(running, key=lambda job: job.started_at)
+            return _ok(
+                count=len(cards),
+                jobs=cards,
+                sweep_status="running",
+                running_job_id=newest.id,
+                progress=newest.progress,
+                message="A sweep is still running. Call get_sweep_status before using these cards.",
+            )
         return _ok(count=len(cards), jobs=cards)
     except _EXPECTED as exc:
         log.warning("%s: %s", type(exc).__name__, exc)
@@ -773,8 +1263,11 @@ def import_jobs(
     """
     Appends agent-found jobs (canonical card schema) into the current session.
 
-    URLs are skipped validation by default because the agent already vetted them; pass
-    validate=True to run each URL through the validator.
+    Use this to add roles that independent research found and verified but Sweepy missed.
+    Confirm each posting from an employer or ATS source when possible, avoid duplicates,
+    and do not invent missing fields. URLs skip validation by default; pass validate=True
+    for an additional check. A rate limit or bot-protection response is treated as
+    unverified, not as proof that the posting is dead.
 
     Args:
         jobs_json: JSON string encoding a list of card records.

@@ -23,6 +23,7 @@ from engine.config import (
 from engine.discovery import (
     build_cache,
     build_circuit,
+    dedupe_jobs,
     discover_engines,
     discover_jobs,
     discover_sources,
@@ -32,6 +33,7 @@ from engine.docx import convert_docx_to_pdf
 from engine.engines import install_engines, status_table
 from engine.enrich import enrich_jobs, get_tracks
 from engine.exporter import export_to_csv, export_to_json, export_to_png
+from engine.history import SweepHistory, build_history, history_scope
 from engine.logging import enable_debug_logging, recent_log_lines
 from engine.pdf_builder import build_pdf
 from engine.report import build_report
@@ -156,6 +158,16 @@ def _setup_headless(args) -> None:
         profile["orchestrator"] = orchestrator
         profile["cache"] = cache
 
+    history_days = getattr(args, "history_days", None)
+    no_history = getattr(args, "no_history", False)
+    if history_days is not None or no_history:
+        history = dict(profile.get("history") or {})
+        if history_days is not None:
+            history["retention_days"] = max(0, history_days)
+        if no_history:
+            history["enabled"] = False
+        profile["history"] = history
+
     runtime = normalize_sources(profile)
     errors = validate_sources(
         {engine: runtime["engines"][engine] for engine in runtime["enabled"]},
@@ -200,6 +212,11 @@ def main() -> None:
         help="Download optional engines: 'all' or a comma-separated list",
     )
     parser.add_argument(
+        "--allow-engine-conflicts",
+        action="store_true",
+        help="Install an engine whose metadata conflicts, skipping the conflicting pin",
+    )
+    parser.add_argument(
         "--sources",
         metavar="NAMES",
         help="Enable these engines for a headless setup (comma-separated)",
@@ -216,6 +233,32 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, metavar="SECONDS", help="Per-source timeout in seconds")
     parser.add_argument("--cache-ttl", type=int, metavar="SECONDS", help="Cache lifetime in seconds")
     parser.add_argument("--no-cache", action="store_true", help="Disable the discovery cache")
+    parser.add_argument(
+        "--no-dedupe",
+        action="store_true",
+        help="Keep duplicate postings from separate boards for this sweep",
+    )
+    parser.add_argument(
+        "--include-seen",
+        action="store_true",
+        help="Report postings seen in an earlier sweep too",
+    )
+    parser.add_argument(
+        "--reset-history",
+        action="store_true",
+        help="Forget the postings already reported for this profile",
+    )
+    parser.add_argument(
+        "--history-days",
+        type=int,
+        metavar="DAYS",
+        help="Days before a reported posting can appear again (headless setup)",
+    )
+    parser.add_argument(
+        "--no-history",
+        action="store_true",
+        help="Report every posting on every run (headless setup)",
+    )
     parser.add_argument(
         "--non-interactive",
         action="store_true",
@@ -258,19 +301,33 @@ def main() -> None:
     if args.install_engines:
         names = _split_list(args.install_engines) or ["all"]
         try:
-            results = install_engines(names, echo=print)
+            results = install_engines(
+                names, echo=print, allow_conflicts=args.allow_engine_conflicts
+            )
         except ValueError as exc:
             print(f"Error: {exc}")
             sys.exit(1)
         failed = False
+        ready = []
         for engine, result in results.items():
             if result.get("installed"):
+                ready.append(engine)
                 print(f"{engine}: ready")
+            elif result.get("blocked"):
+                failed = True
+                print(f"{engine}: not installed - {result.get('detail')}")
+                print("  Override with: sweepy --install-engines "
+                      f"{engine} --allow-engine-conflicts")
             else:
                 failed = True
                 print(f"{engine}: install failed - {result.get('detail')}")
                 if result.get("command"):
                     print(f"  Retry with: {result['command']}")
+        if ready:
+            print("")
+            print("Add an engine to a profile:")
+            print("  sweepy                                  # Sweepy's Toolbox > Manage job engines")
+            print(f"  sweepy --setup --non-interactive --profile FILE --sources {','.join(ready)}")
         sys.exit(1 if failed else 0)
 
     if args.convert:
@@ -294,9 +351,20 @@ def main() -> None:
             _open_wizard(args.profile)
         sys.exit(0)
 
+    if args.reset_history and not (args.run or args.profile):
+        _print_banner()
+        _clear_history(None)
+        sys.exit(0)
+
     if args.run or args.profile:
         _print_banner()
-        _run_from_cli(args.profile, use_last=args.run)
+        _run_from_cli(
+            args.profile,
+            use_last=args.run,
+            deduplicate=not args.no_dedupe,
+            include_seen=args.include_seen,
+            reset_history=args.reset_history,
+        )
         sys.exit(0)
 
     _open_wizard(None)
@@ -309,7 +377,10 @@ def _print_banner() -> None:
 
 
 def _default_profile_path() -> Optional[str]:
-    """Return the first conventional profile on disk, or None when the folder is empty."""
+    """Return the last saved profile, then the first conventional profile on disk."""
+    saved = last_profile_path()
+    if saved:
+        return saved
     for candidate in _DEFAULT_PROFILE_CANDIDATES:
         if os.path.exists(candidate):
             return candidate
@@ -319,7 +390,11 @@ def _default_profile_path() -> Optional[str]:
 def _run_wizard_sweep(profile_data: dict, profile_path: Optional[str]) -> None:
     """Run the pipeline from the menu and keep the menu alive when the sweep fails."""
     try:
-        run_sweep_pipeline(profile_dict=profile_data)
+        run_sweep_pipeline(
+            profile_dict=profile_data,
+            profile_path=profile_path,
+            execution_method="wizard",
+        )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"Error: {exc}")
         return
@@ -337,18 +412,63 @@ def _open_wizard(profile_path: Optional[str]) -> None:
     print(f"  (or: python swee.py --profile {saved_path})")
 
 
-def _run_from_cli(profile_path: Optional[str], *, use_last: bool) -> None:
+def _history_for_profile(profile_path: str):
+    """Return the history store and scope for a saved profile."""
+    config = load_config(profile_path)
+    runtime = normalize_sources(config)
+    cfg = runtime.get("history") or {}
+    store = SweepHistory(
+        path=cfg.get("path"),
+        retention_days=cfg.get("retention_days", 4),
+        match=cfg.get("match", "url+role"),
+    )
+    scope = history_scope(os.path.splitext(os.path.basename(profile_path))[0])
+    return store, scope
+
+
+def _clear_history(profile_path: Optional[str]) -> None:
+    """Delete the remembered postings for one profile."""
+    if not profile_path:
+        profile_path = _default_profile_path()
+    if not profile_path:
+        print("Error: no saved profile found. Create one with: python swee.py --setup")
+        return
+    try:
+        store, scope = _history_for_profile(profile_path)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"Error: {exc}")
+        return
+    deleted = store.clear(scope)
+    print(f"Cleared {deleted} remembered posting(s) for {scope}.")
+
+
+def _run_from_cli(
+    profile_path: Optional[str],
+    *,
+    use_last: bool,
+    deduplicate: bool = True,
+    include_seen: bool = False,
+    reset_history: bool = False,
+) -> None:
     """Run the sweep pipeline, resolving the last saved profile when ``--run`` is set."""
     if not profile_path and use_last:
-        profile_path = last_profile_path() or _default_profile_path()
+        profile_path = _default_profile_path()
         if not profile_path:
             print("Error: no saved profile found. Create one with: python swee.py --setup")
             print(f"Docs: {DOCS_URL}")
             sys.exit(1)
         print(f"Using the last saved profile: {profile_path}")
 
+    if reset_history and profile_path:
+        _clear_history(profile_path)
+
     try:
-        run_sweep_pipeline(profile_path=profile_path)
+        run_sweep_pipeline(
+            profile_path=profile_path,
+            deduplicate=deduplicate,
+            include_seen=include_seen,
+            execution_method="cli",
+        )
     except FileNotFoundError as e:
         print(f"Error: {e}")
         if not profile_path:
@@ -421,6 +541,9 @@ def run_sweep_pipeline(
     verbose: bool = True,
     progress: Optional[Callable[[int, int, str], None]] = None,
     include_roles: bool = False,
+    deduplicate: bool = True,
+    include_seen: bool = False,
+    execution_method: str = "direct",
 ) -> dict:
     """
     Executes the Sweepy 5-stage pipeline.
@@ -435,7 +558,14 @@ def run_sweep_pipeline(
 
     if profile_dict is not None:
         config = profile_dict
-        profile_stem = re.sub(r'[^a-zA-Z0-9]+', '_', config.get("name", "profile")).strip('_').lower()
+        if profile_path:
+            # An in-memory edit still belongs to the file it came from, so its
+            # history bucket matches a later `sweepy --run` of that profile.
+            profile_stem = os.path.splitext(os.path.basename(profile_path))[0]
+        else:
+            profile_stem = re.sub(
+                r'[^a-zA-Z0-9]+', '_', config.get("name", "profile")
+            ).strip('_').lower()
     else:
         if not profile_path:
             profile_path = _default_profile_path()
@@ -447,9 +577,8 @@ def run_sweep_pipeline(
         config = load_config(profile_path)
         profile_stem = os.path.splitext(os.path.basename(profile_path))[0]
 
-    # CLI-only debug logging: MCP callers pass verbose=False, so the stdio
-    # stream stays clean and file logging stays disabled there.
-    if verbose and config.get("debug"):
+    debug_enabled = os.environ.get("SWEEPY_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+    if config.get("debug") or debug_enabled:
         enable_debug_logging()
 
     name = config.get("name", "Job Seeker")
@@ -459,6 +588,7 @@ def run_sweep_pipeline(
     remote_only = search.get("remote_only", False)
     include_hybrid = search.get("include_hybrid", True)
     min_salary = search.get("min_salary", 0)
+    salary_from_description = bool(search.get("salary_from_description", True))
 
     resume = config.get("resume", {})
     resume_path = resume.get("path", "")
@@ -479,6 +609,8 @@ def run_sweep_pipeline(
     extra_engines = [e for e in runtime["enabled"] if e not in ("jobspy", "ats")]
     cache = build_cache(runtime)
     circuit = build_circuit(runtime)
+    history = build_history(runtime)
+    history_scope_key = history_scope(profile_stem)
     skipped_sources: list = []
 
     report = config.get("report", {}) or {}
@@ -499,6 +631,7 @@ def run_sweep_pipeline(
         location_suffix.append("no hybrid")
     location_display = f"{location} ({', '.join(location_suffix)})"
     log_fn(f"Profile: {name} — {titles_display} ({location})")
+    log_fn(f"Execution method: {execution_method}")
     log_fn("================================================================================")
 
     # [1/5] Loading profile
@@ -514,21 +647,25 @@ def run_sweep_pipeline(
     # [2/5] Discovering roles
     _progress(2, 5, "Discovering roles")
     log_fn("\n[2/5] Discovering roles...")
+    log_fn(f"  * Cross-board duplicate checking: {'enabled' if deduplicate else 'disabled'}")
     jobs, platform_counts = discover_jobs(
         titles, location, remote_only, include_hybrid, min_salary, platforms,
         sources_config=sources, runtime=runtime, cache=cache, circuit=circuit,
-        skipped=skipped_sources, progress=progress,
+        skipped=skipped_sources, progress=progress, deduplicate=deduplicate,
+        salary_from_description=salary_from_description,
     )
     source_jobs, source_counts = discover_sources(
         sources, titles, location, remote_only, include_hybrid, min_salary,
         platforms=platforms, runtime=runtime, cache=cache, circuit=circuit,
-        skipped=skipped_sources, progress=progress,
+        skipped=skipped_sources, progress=progress, deduplicate=deduplicate,
+        salary_from_description=salary_from_description,
     )
     extra_jobs, extra_counts = (
         discover_engines(
             extra_engines, titles, location, remote_only, include_hybrid, min_salary,
             runtime=runtime, cache=cache, circuit=circuit,
-            skipped=skipped_sources, progress=progress,
+            skipped=skipped_sources, progress=progress, deduplicate=deduplicate,
+            salary_from_description=salary_from_description,
         )
         if extra_engines
         else ([], {})
@@ -536,17 +673,56 @@ def run_sweep_pipeline(
     jobs = jobs + source_jobs + extra_jobs
     for plat_name, count in {**source_counts, **extra_counts}.items():
         platform_counts[plat_name] = platform_counts.get(plat_name, 0) + count
-    jobs = list({j["url"]: j for j in jobs if j.get("url")}.values())
+    before_dedupe = len(jobs)
+    jobs = dedupe_jobs(jobs, enabled=deduplicate)
+    removed_duplicates = before_dedupe - len(jobs)
+    if deduplicate and removed_duplicates:
+        log_fn(f"  * Removed {removed_duplicates} redundant postings from other boards")
     for plat_name, count in platform_counts.items():
         dots = "." * max(3, 25 - len(plat_name))
         log_fn(f"  -> Searching {plat_name}{dots} Found {count} postings")
     log_fn(f"  * Total discovered: {len(jobs)} postings")
+    discovered_total = len(jobs)
+    previously_seen_count = 0
+
+    if history is not None and not include_seen and jobs:
+        history_mode = (runtime.get("history") or {}).get("match", "url+role")
+        jobs, seen_jobs = history.filter_new(jobs, history_scope_key, match=history_mode)
+        previously_seen_count = len(seen_jobs)
+        if previously_seen_count:
+            log_fn(
+                f"  * Skipped {previously_seen_count} postings reported in an earlier sweep"
+            )
+        log_fn(f"  * New postings: {len(jobs)}")
 
     if not jobs:
+        if previously_seen_count:
+            message = (
+                f"No new postings since your last sweep ({previously_seen_count} already "
+                "reported). Run with --include-seen to review them."
+            )
+            log_fn(message)
+            return {
+                "status": "completed",
+                "message": message,
+                "discovered_count": discovered_total,
+                "new_count": 0,
+                "previously_seen_count": previously_seen_count,
+                "history_scope": history_scope_key,
+                "active_count": 0,
+                "top_match": None,
+                "roles": [],
+                "top_roles": [],
+                "reports": {},
+                "skipped_sources": skipped_sources,
+            }
         log_fn("No jobs found matching your criteria. Try expanding your search.")
         return {
             "status": "completed",
             "discovered_count": 0,
+            "new_count": 0,
+            "previously_seen_count": 0,
+            "history_scope": history_scope_key,
             "active_count": 0,
             "top_match": None,
             "roles": [],
@@ -567,11 +743,23 @@ def run_sweep_pipeline(
         log_fn(f"  * {len(valid_jobs)} active postings remain ({unverified_count} unverified)")
     else:
         log_fn(f"  * {len(valid_jobs)} verified active postings remain")
+
+    if history is not None:
+        sweep_id = (
+            f"{profile_stem}-"
+            f"{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+        )
+        history.record(valid_jobs, history_scope_key, sweep_id=sweep_id)
+        history.prune()
+
     if not valid_jobs:
         log_fn("All discovered jobs had invalid or dead links.")
         return {
             "status": "completed",
-            "discovered_count": len(jobs),
+            "discovered_count": discovered_total,
+            "new_count": len(jobs),
+            "previously_seen_count": previously_seen_count,
+            "history_scope": history_scope_key,
             "active_count": 0,
             "top_match": None,
             "roles": [],
@@ -678,7 +866,10 @@ def run_sweep_pipeline(
 
     return {
         "status": "completed",
-        "discovered_count": len(jobs),
+        "discovered_count": discovered_total,
+        "new_count": len(jobs),
+        "previously_seen_count": previously_seen_count,
+        "history_scope": history_scope_key,
         "active_count": len(scored_jobs),
         "top_match": {
             "title": top_title,

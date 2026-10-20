@@ -1,10 +1,12 @@
 import copy
+import logging
 import types
 
 import pytest
 import yaml
 
 import engine.config as config
+import engine.engines as engine_engines
 from engine.sweep_config import normalize_sources
 
 
@@ -109,7 +111,7 @@ def test_ensure_engine_available_installs_on_confirmation(monkeypatch):
     monkeypatch.setattr(
         config,
         "install_engines",
-        lambda names, echo=None: _record(seen, names),
+        lambda names, echo=None, **kwargs: _record(seen, names),
     )
     assert config._ensure_engine_available("jobdrop") is True
     assert seen["names"] == ["jobdrop"]
@@ -130,17 +132,31 @@ def test_ensure_engine_available_reports_failed_install(monkeypatch):
     monkeypatch.setattr(
         config,
         "install_engines",
-        lambda names, echo=None: {names[0]: {"installed": False, "detail": "no wheels", "command": "pip"}},
+        lambda names, echo=None, **kwargs: {names[0]: {"installed": False, "detail": "no wheels", "command": "pip"}},
     )
     assert config._ensure_engine_available("jobdrop") is False
 
 
-def test_openroles_reprompts_until_companies_given(monkeypatch):
-    monkeypatch.setattr(
-        config, "_ask", _scripted([["greenhouse"], "", "figma, stripe"])
-    )
+def test_openroles_skips_when_no_companies_given(monkeypatch):
+    monkeypatch.setattr(config, "_ask", _scripted([""]))
+    assert config._ask_openroles({}) is None
+
+
+def test_openroles_parses_companies_and_asks_for_ats(monkeypatch):
+    monkeypatch.setattr(config, "_ask", _scripted(["figma, stripe", ["greenhouse"]]))
     answers = config._ask_openroles({})
     assert answers == {"ats": ["greenhouse"], "companies": ["figma", "stripe"]}
+
+
+def test_ask_engines_keeps_other_engines_when_openroles_is_skipped(monkeypatch):
+    monkeypatch.setattr(config, "_ask", _scripted([["jobspy", "openroles"], ""]))
+    monkeypatch.setattr(config, "_ensure_engine_available", lambda name: True)
+    monkeypatch.setitem(config._ENGINE_PROMPTS, "jobspy", lambda current: {"sites": ["indeed"]})
+
+    answers = config._ask_engines({})
+
+    assert answers["enabled"] == ["jobspy"]
+    assert "openroles" not in answers
 
 
 def test_apify_requires_token(monkeypatch):
@@ -314,12 +330,12 @@ def test_manage_engines_shows_details(monkeypatch, capsys):
 
 def test_manage_engines_installs_all_missing(monkeypatch):
     installed = []
-    monkeypatch.setattr(config, "missing_engines", lambda: ["jobdrop"])
+    monkeypatch.setattr(config, "missing_engines", lambda **kwargs: ["jobdrop"])
     monkeypatch.setattr(config, "_ask", _scripted(["Install all missing engines", True, config.BACK_LABEL]))
     monkeypatch.setattr(
         config,
         "install_engines",
-        lambda names, echo=None: installed.append(list(names)) or {"jobdrop": {"installed": True}},
+        lambda names, echo=None, **kwargs: installed.append(list(names)) or {"jobdrop": {"installed": True}},
     )
     config._manage_engines()
     assert installed == [["jobdrop"]]
@@ -327,7 +343,7 @@ def test_manage_engines_installs_all_missing(monkeypatch):
 
 def test_manage_engines_installs_one(monkeypatch):
     installed = []
-    monkeypatch.setattr(config, "missing_engines", lambda: ["jobdrop", "openroles"])
+    monkeypatch.setattr(config, "missing_engines", lambda **kwargs: ["jobdrop", "openroles"])
     monkeypatch.setattr(
         config,
         "_ask",
@@ -336,21 +352,21 @@ def test_manage_engines_installs_one(monkeypatch):
     monkeypatch.setattr(
         config,
         "install_engines",
-        lambda names, echo=None: installed.append(list(names)) or {"openroles": {"installed": True}},
+        lambda names, echo=None, **kwargs: installed.append(list(names)) or {"openroles": {"installed": True}},
     )
     config._manage_engines()
     assert installed == [["openroles"]]
 
 
 def test_manage_engines_prints_retry_command(monkeypatch, caplog):
-    monkeypatch.setattr(config, "missing_engines", lambda: ["jobdrop"])
+    monkeypatch.setattr(config, "missing_engines", lambda **kwargs: ["jobdrop"])
     monkeypatch.setattr(
         config, "_ask", _scripted(["Install all missing engines", True, config.BACK_LABEL])
     )
     monkeypatch.setattr(
         config,
         "install_engines",
-        lambda names, echo=None: {
+        lambda names, echo=None, **kwargs: {
             "jobdrop": {"installed": False, "detail": "no wheels", "command": "pip install jobdrop"}
         },
     )
@@ -361,7 +377,7 @@ def test_manage_engines_prints_retry_command(monkeypatch, caplog):
 
 
 def test_manage_engines_never_installs_without_confirmation(monkeypatch):
-    monkeypatch.setattr(config, "missing_engines", lambda: ["jobdrop"])
+    monkeypatch.setattr(config, "missing_engines", lambda **kwargs: ["jobdrop"])
     monkeypatch.setattr(config, "_ask", _scripted(["Install all missing engines", False, config.BACK_LABEL]))
     monkeypatch.setattr(
         config, "install_engines", lambda *a, **k: pytest.fail("must not install unasked")
@@ -420,6 +436,8 @@ def _headless_args(**overrides):
         "timeout": 120,
         "cache_ttl": 60,
         "no_cache": True,
+        "history_days": None,
+        "no_history": False,
     }
     base.update(overrides)
     return types.SimpleNamespace(**base)
@@ -450,6 +468,15 @@ def test_headless_setup_applies_flags(monkeypatch):
 
     runtime = normalize_sources(profile)
     assert runtime["enabled"] == ["jobspy", "ats"]
+
+
+def test_headless_setup_applies_history_flags(monkeypatch):
+    profile = _profile_from(monkeypatch, history_days=14)
+    assert profile["history"]["retention_days"] == 14
+    assert "enabled" not in profile["history"]
+
+    disabled = _profile_from(monkeypatch, no_history=True)
+    assert disabled["history"]["enabled"] is False
 
 
 def test_headless_setup_requires_identity_fields(monkeypatch):
@@ -486,3 +513,192 @@ def test_headless_setup_updates_existing_profile(tmp_path, monkeypatch):
     )
     assert captured["name"] == "Old"
     assert captured["search"]["titles"] == ["Writer"]
+
+# ---------------------------------------------------------------------------
+# Platform picker: every board, grouped by engine, labeled with install state
+# ---------------------------------------------------------------------------
+
+
+def test_board_catalog_covers_every_engine():
+    from engine.engines import BOARD_CATALOG, ENGINE_CATALOG
+
+    assert set(BOARD_CATALOG) == set(ENGINE_CATALOG)
+
+
+def test_platform_picker_lists_every_catalog_board():
+    from engine.engines import BOARD_CATALOG
+
+    choices = config._board_choices(set())
+    values = {
+        choice.value
+        for choice in choices
+        if not isinstance(choice, config.questionary.Separator)
+    }
+    expected = {f"{engine}:{board}" for engine, boards in BOARD_CATALOG.items() for board in boards}
+
+    assert values == expected
+
+
+def test_platform_picker_groups_boards_under_engine_headers():
+    choices = config._board_choices(set())
+    headers = [
+        choice for choice in choices if isinstance(choice, config.questionary.Separator)
+    ]
+    titles = [header.title for header in headers]
+
+    assert len(titles) == len(config.BOARD_CATALOG)
+    assert any("jobspy" in title for title in titles)
+    assert any("jobdrop" in title for title in titles)
+
+
+def test_platform_picker_labels_mark_download_state(monkeypatch):
+    monkeypatch.setattr(
+        engine_engines, "engine_status", lambda name: {"installed": False, "core": False}
+    )
+    labels = {
+        choice.value: choice.title
+        for choice in config._board_choices(set())
+        if not isinstance(choice, config.questionary.Separator)
+    }
+
+    assert "built in" in labels["jobspy:indeed"]
+    assert "needs download" in labels["jobdrop:wellfound"]
+    assert "needs download" in labels["hirehunt:shine"]
+
+
+def test_platform_picker_labels_installed_engine(monkeypatch):
+    monkeypatch.setattr(
+        engine_engines, "engine_status", lambda name: {"installed": True, "core": False}
+    )
+    labels = {
+        choice.value: choice.title
+        for choice in config._board_choices(set())
+        if not isinstance(choice, config.questionary.Separator)
+    }
+
+    assert "installed" in labels["jobdrop:wellfound"]
+    assert "needs download" not in labels["jobdrop:wellfound"]
+
+
+def test_group_boards_parses_engine_prefixed_values():
+    grouped = config._group_boards(
+        ["jobspy:indeed", "ats:lever", "jobspy:glassdoor", "ghost:x", "jobspy:nope"]
+    )
+
+    assert grouped == {"jobspy": ["indeed", "glassdoor"], "ats": ["lever"]}
+
+
+def test_ask_platforms_groups_selection_by_engine(monkeypatch):
+    monkeypatch.setattr(config, "engine_status", lambda name: {"installed": False, "core": False})
+    monkeypatch.setattr(
+        config, "_ask", _scripted([["jobspy:indeed", "jobdrop:wellfound"]])
+    )
+
+    assert config._ask_platforms(current={}) == {
+        "jobspy": ["indeed"],
+        "jobdrop": ["wellfound"],
+    }
+
+
+def test_ask_platforms_hints_at_the_install_command(monkeypatch, caplog):
+    monkeypatch.setattr(config, "engine_status", lambda name: {"installed": False, "core": False})
+    monkeypatch.setattr(config, "_ask", _scripted([["jobdrop:wellfound"]]))
+    caplog.set_level(logging.INFO, logger="sweepy.engine.config")
+
+    config._ask_platforms(current={})
+
+    assert "jobdrop" in caplog.text
+    assert "install" in caplog.text.lower()
+
+
+def test_ask_platforms_skips_the_hint_when_already_installed(monkeypatch, caplog):
+    monkeypatch.setattr(config, "engine_status", lambda name: {"installed": True, "core": False})
+    monkeypatch.setattr(config, "_ask", _scripted([["jobdrop:wellfound"]]))
+    caplog.set_level(logging.INFO, logger="sweepy.engine.config")
+
+    config._ask_platforms(current={})
+
+    assert "need the jobdrop engine" not in caplog.text
+
+
+def test_selected_boards_reads_the_new_dict():
+    assert config._selected_boards({"jobspy": ["indeed"], "ats": ["lever"]}) == {
+        "jobspy:indeed",
+        "ats:lever",
+    }
+
+
+def test_selected_boards_reads_a_legacy_platform_list():
+    assert config._selected_boards(["greenhouse", "aggregators"]) == {"ats:greenhouse"}
+
+
+def test_selecting_an_engine_board_enables_that_engine():
+    sources = config._boards_to_sources({"jobdrop": ["wellfound", "remoteok"]}, {})
+
+    assert sources["jobdrop"]["sites"] == ["wellfound", "remoteok"]
+    assert "jobdrop" in sources["enabled"]
+
+
+def test_openroles_without_companies_is_not_enabled(caplog):
+    caplog.set_level(logging.WARNING, logger="sweepy.engine.config")
+
+    sources = config._boards_to_sources({"openroles": ["greenhouse"]}, {})
+
+    assert "openroles" not in (sources.get("enabled") or [])
+    assert "companies" in caplog.text
+
+
+def test_board_selection_preserves_unrelated_source_keys():
+    base = {
+        "proxies": ["http://proxy:8080"],
+        "openroles": {"companies": ["acme"], "ats": ["greenhouse"]},
+    }
+
+    sources = config._boards_to_sources({"jobspy": ["indeed"], "openroles": ["lever"]}, base)
+
+    assert sources["proxies"] == ["http://proxy:8080"]
+    assert sources["openroles"]["companies"] == ["acme"]
+    assert sources["openroles"]["ats"] == ["lever"]
+
+
+def test_board_selection_toggles_ats_platforms():
+    sources = config._boards_to_sources({"ats": ["greenhouse", "builtinnyc"]}, {})
+
+    assert sources["greenhouse"]["enabled"] is True
+    assert sources["lever"]["enabled"] is False
+    assert sources["builtinnyc"]["enabled"] is True
+    assert "ats" in sources["enabled"]
+
+
+def test_format_boards_marks_downloaded_engines(monkeypatch):
+    monkeypatch.setattr(config, "engine_status", lambda name: {"installed": False, "core": False})
+
+    text = config._format_boards({"jobspy": ["indeed"], "jobdrop": ["wellfound"]})
+
+    assert "jobspy: 1" in text
+    assert "jobdrop (needs download): 1" in text
+
+
+def test_format_boards_drops_the_note_once_installed(monkeypatch):
+    monkeypatch.setattr(config, "engine_status", lambda name: {"installed": True, "core": False})
+
+    assert config._format_boards({"jobdrop": ["wellfound", "remoteok"]}) == "jobdrop: 2"
+
+
+def test_platform_answers_rebuilds_the_picker_selection():
+    profile = {
+        "platforms": {"greenhouse": True, "lever": False},
+        "sources": {"enabled": ["jobspy", "ats"], "jobspy": {"sites": ["indeed"]}},
+    }
+
+    boards = config._platform_answers(normalize_sources(profile), profile["platforms"])
+
+    assert boards["jobspy"] == ["indeed"]
+    assert boards["ats"] == ["greenhouse", "builtinnyc"]
+
+def test_platform_picker_labels_fit_a_narrow_console():
+    choices = config._board_choices(set())
+
+    for choice in choices:
+        assert len(choice.title) <= 60, choice.title
+

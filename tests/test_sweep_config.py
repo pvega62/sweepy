@@ -87,6 +87,36 @@ def test_cache_and_orchestrator_overrides():
     assert runtime["orchestrator"]["circuit_breaker"]["cooldown_seconds"] == 5
 
 
+def test_history_defaults():
+    history = normalize_sources({})["history"]
+
+    assert history == {
+        "enabled": True,
+        "retention_days": 4,
+        "match": "url+role",
+        "path": None,
+    }
+
+
+def test_history_overrides_and_invalid_values_fall_back():
+    runtime = normalize_sources(
+        {"history": {"enabled": False, "retention_days": 10, "match": "url"}}
+    )
+    assert runtime["history"]["enabled"] is False
+    assert runtime["history"]["retention_days"] == 10
+    assert runtime["history"]["match"] == "url"
+
+    invalid = normalize_sources(
+        {"history": {"retention_days": "soon", "match": "title"}}
+    )["history"]
+    assert invalid["retention_days"] == 4
+    assert invalid["match"] == "url+role"
+
+    non_mapping = normalize_sources({"history": True})["history"]
+    assert non_mapping["enabled"] is True
+    assert non_mapping["retention_days"] == 4
+
+
 def test_migrate_legacy_platforms_list():
     migrated = migrate_legacy_platforms(["linkedin", "indeed"])
     assert migrated == {"enabled": ["jobspy"], "jobspy": {"sites": ["linkedin", "indeed"]}}
@@ -139,6 +169,59 @@ def test_normalize_all_merges_and_dedupes():
     merged = normalize_all([("jobspy", a, None), ("jobdrop", b, None), ("openroles", c, None)])
     assert len(merged) == 2
     assert set(merged["source"]) == {"jobspy", "openroles"}
+
+
+def test_normalize_all_dedupes_same_role_from_different_boards():
+    first = pd.DataFrame(
+        [{
+            "title": "Technical Writer",
+            "company": "Acme",
+            "location": "NYC",
+            "url": "https://linkedin.example/jobs/1",
+            "platform": "LinkedIn",
+        }]
+    )
+    second = pd.DataFrame(
+        [{
+            "title": "Technical Writer",
+            "company": "Acme",
+            "location": "NYC",
+            "url": "https://jobs.example.com/technical-writer",
+            "platform": "Greenhouse",
+        }]
+    )
+
+    merged = normalize_all([("jobspy", first, None), ("ats", second, None)])
+
+    assert len(merged) == 1
+
+
+def test_normalize_all_can_keep_cross_board_duplicates():
+    first = pd.DataFrame(
+        [{
+            "title": "Technical Writer",
+            "company": "Acme",
+            "location": "NYC",
+            "url": "https://linkedin.example/jobs/1",
+            "platform": "LinkedIn",
+        }]
+    )
+    second = pd.DataFrame(
+        [{
+            "title": "Technical Writer",
+            "company": "Acme",
+            "location": "NYC",
+            "url": "https://jobs.example.com/technical-writer",
+            "platform": "Greenhouse",
+        }]
+    )
+
+    merged = normalize_all(
+        [("jobspy", first, None), ("ats", second, None)],
+        deduplicate=False,
+    )
+
+    assert len(merged) == 2
 
 
 def test_normalize_all_skips_failures():

@@ -2,44 +2,44 @@ name: Pedro Vega
 search:
   titles:
   - Technical Writer
-  - UX Writer
-  - Content Designer
-  location: United States
+  - Documentation Engineer
+  - Developer Experience Writer
+  location: Remote
   remote_only: false
   include_hybrid: true
   min_salary: 0
 resume:
-  path: C:/Users/vegap/OneDrive/Documents/GitHub/pvega62.github.io/Pedro Vega Resume.pdf
+  path: C:\Users\vegap\OneDrive\Documents\GitHub\pvega62.github.io\Pedro Vega Resume.pdf
   must_have_skills:
   - technical writing
-  - API documentation
-  - Docusaurus
-  - UX writing
-  - markdown
+  - developer documentation
   - docs as code
-  - developer experience
+  - Docusaurus
+  - API documentation
+  - content strategy
+  - GitHub
   keywords_weight: 1.5
   synonyms:
-  - - docs-as-code
+  - - docs as code
     - documentation as code
-  - - content design
-    - UX writing
+  - - developer documentation
+    - technical documentation
+  - - developer experience writer
+    - developer advocate writer
   - - technical writer
-    - developer documentation
-  - - API docs
-    - API documentation
+    - technical content writer
 platforms:
   greenhouse: true
   ashby: true
   lever: true
   workable: true
   aggregators: false
-  aggregrator: true
 export:
   format: pdf,csv,json
   output_dir: results
-report:
-  style: cards
-  cards_per_page: 4
-  max_cards: 24
-debug: false
+sources:
+  enabled:
+  - jobspy
+  - ats
+  - hirehunt
+  - jobdrop

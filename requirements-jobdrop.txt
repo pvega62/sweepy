@@ -1,0 +1,17 @@
+# Install this only with the supported split command, which keeps JobSpy's
+# curl_cffi version:
+#
+#   sweepy --install-engines jobdrop --allow-engine-conflicts
+#
+# That runs `pip install --no-deps jobdrop` and then resolves jobdrop's other
+# requirements, leaving curl_cffi alone. A plain `pip install -r` of this file
+# downgrades curl_cffi to 0.7.x, which puts JobSpy outside its declared range.
+#
+# Read this before installing:
+#   * jobdrop adds about 406 MB of packages, led by scipy, playwright, tls-client,
+#     and selenium.
+#   * Its browser-backed boards also download a browser on first use.
+#
+# Reach for it when you want jobdrop's 33 boards enough to accept that warning.
+
+jobdrop>=2.10,<3

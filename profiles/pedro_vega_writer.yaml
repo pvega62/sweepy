@@ -1,0 +1,132 @@
+name: Pedro Vega
+search:
+  titles:
+  - Technical Writer
+  - UX Writer
+  - Content Designer
+  location: New York, NY
+  remote_only: false
+  include_hybrid: true
+  min_salary: 0
+resume:
+  path: C:/Users/vegap/OneDrive/Documents/GitHub/pvega62.github.io/Pedro Vega Resume.pdf
+  must_have_skills:
+  - technical writing
+  - developer documentation
+  - ux writing
+  - api docs
+  - markdown
+  - docusaurus
+  - openapi
+  - wcag
+  - content design
+  keywords_weight: 1.5
+  synonyms:
+  - - technical writer
+    - technical writing
+  - - ux writer
+    - ux writing
+  - - content designer
+    - content design
+  - - sdk guide
+    - sdk documentation
+  - - docs-as-code
+    - documentation as code
+  - - api documentation
+    - api docs
+    - openapi
+platforms:
+  greenhouse: true
+  ashby: true
+  lever: true
+  workable: true
+  aggregators: false
+export:
+  format: pdf,csv,json
+  output_dir: results
+sources:
+  enabled:
+  - jobspy
+  - ats
+  - hirehunt
+  - openroles
+  - jobdrop
+  jobspy:
+    sites:
+    - linkedin
+    - indeed
+    - glassdoor
+    - zip_recruiter
+    - google
+    - bayt
+    - naukri
+    - bdjobs
+    fetch_descriptions: true
+    proxies: []
+    user_agent: null
+    results_per_title: 25
+  hirehunt:
+    sources:
+    - linkedin
+    - indeed
+    - naukri
+    - shine
+    - internshala
+    - unstop
+    - google_careers
+    - amazon
+    - meta
+    - apple
+    - netflix
+    - microsoft
+  openroles:
+    ats:
+    - greenhouse
+    - lever
+    - ashby
+    - workday
+    companies:
+    - stripe
+  jobdrop:
+    sites:
+    - linkedin
+    - indeed
+    - glassdoor
+    - google
+    - zip_recruiter
+    - hiring_cafe
+    - wellfound
+    - collab_work
+    - trueup
+    - greenhouse
+    - ashby
+    - workday
+    - lever
+    - remoteok
+    - weworkremotely
+    - governmentjobs
+    - builtin
+    - icims
+    - bayt
+    - naukri
+    - usajobs
+    - adzuna
+    - jooble
+    - findwork
+    - the_muse
+    - insight_global
+    - clearance_jobs
+    - kforce
+    - snagajob
+    - dice
+    - idealist
+    - careerbuilder
+    - handshake
+    headless: false
+    fetch_descriptions: true
+    proxies: []
+report:
+  style: cards
+  cards_per_page: 6
+  max_cards: 24
+debug: false

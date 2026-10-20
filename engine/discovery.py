@@ -15,6 +15,7 @@ from engine.cache import ResultCache, cache_key
 from engine.circuit_breaker import CircuitBreaker
 from engine.engine_defaults import DEFAULT_JOBSPY_SITES
 from engine.normalize import normalize_all
+from engine.salary import annual_max_amount, extract_pay
 from engine.sources import (
     fetch_ashby_org,
     fetch_builtin,
@@ -33,6 +34,17 @@ from engine.sweep_config import normalize_sources
 log = logging.getLogger("sweepy.engine.discovery")
 
 _HYBRID_RE = re.compile(r"\bhybrid\b", re.IGNORECASE)
+
+# Pay intervals that aggregator feeds report alongside a numeric range.
+_PERIOD_ALIASES = {
+    "yearly": "year",
+    "annual": "year",
+    "annually": "year",
+    "monthly": "month",
+    "weekly": "week",
+    "daily": "day",
+    "hourly": "hour",
+}
 
 _REQUEST_DELAY = float(os.environ.get("SWEEPY_SOURCE_DELAY", "0.2"))
 
@@ -99,6 +111,7 @@ async def scrape_all(
     *,
     timeout_per_source: Optional[float] = 180,
     use_cache: bool = True,
+    deduplicate: bool = True,
     cache: Optional[ResultCache] = None,
     circuit: Optional[CircuitBreaker] = None,
 ) -> Tuple[pd.DataFrame, List[dict]]:
@@ -114,7 +127,7 @@ async def scrape_all(
     key = None
 
     if use_cache and cache is not None:
-        key = cache_key(query, names, engine_configs)
+        key = cache_key({**query, "deduplicate": deduplicate}, names, engine_configs)
         cached = cache.load(key)
         if cached is not None:
             log.info("Cache hit for %s", ", ".join(names))
@@ -173,7 +186,7 @@ async def scrape_all(
         if frame is not None:
             clean.append(result)
 
-    frame = normalize_all(clean)
+    frame = normalize_all(clean, deduplicate=deduplicate)
     if use_cache and cache is not None and key and clean:
         cache.save(key, frame)
     return frame, skipped
@@ -229,6 +242,12 @@ def _amount(value) -> float:
         return 0.0
 
 
+def _salary_period(value) -> str:
+    """Normalize a pay interval such as ``hourly`` or ``yearly`` into a unit."""
+    text = str(value or "").strip().lower()
+    return _PERIOD_ALIASES.get(text, text or "year")
+
+
 def _as_bool(value) -> Optional[bool]:
     if isinstance(value, bool):
         return value
@@ -263,6 +282,7 @@ def _frame_to_jobs(
     include_hybrid: bool = True,
     min_salary: int = 0,
     filter_titles: bool = False,
+    salary_from_description: bool = True,
 ) -> List[dict]:
     """Convert a normalized frame into Sweepy's job dictionaries and apply filters."""
     if frame is None or frame.empty:
@@ -295,7 +315,17 @@ def _frame_to_jobs(
 
         min_amount = _amount(_first(record, "salary_min", "min_amount"))
         max_amount = _amount(_first(record, "salary_max", "max_amount"))
-        if min_salary > 0 and max_amount > 0 and max_amount < min_salary:
+        currency = str(_first(record, "salary_currency", "currency") or "USD")
+        salary_period = _salary_period(_first(record, "salary_period", "period", "interval"))
+        description = str(_first(record, "description") or "")
+        if salary_from_description and not min_amount and not max_amount and description:
+            pay = extract_pay(description)
+            if pay:
+                min_amount = pay["min_amount"]
+                max_amount = pay["max_amount"]
+                currency = pay["currency"]
+                salary_period = pay["period"]
+        if min_salary > 0 and max_amount > 0 and annual_max_amount(max_amount, salary_period) < min_salary:
             continue
 
         remote = _as_bool(_first(record, "remote", "is_remote"))
@@ -313,10 +343,11 @@ def _frame_to_jobs(
                 "location": job_location,
                 "job_type": str(_first(record, "employment_type", "job_type") or ""),
                 "date_posted": str(_first(record, "posted_at", "date_posted") or ""),
-                "description": str(_first(record, "description") or ""),
+                "description": description,
                 "min_amount": min_amount,
                 "max_amount": max_amount,
-                "currency": str(_first(record, "salary_currency", "currency") or "USD"),
+                "currency": currency,
+                "salary_period": salary_period,
                 "remote": bool(remote),
                 "workplace_type": str(
                     _first(record, "workplace_type") or ("remote" if remote else "")
@@ -328,12 +359,34 @@ def _frame_to_jobs(
     return jobs
 
 
-def _dedupe_jobs(jobs: List[dict]) -> List[dict]:
-    unique: Dict[str, dict] = {}
+def dedupe_jobs(jobs: List[dict], *, enabled: bool = True) -> List[dict]:
+    """Keep one copy of URL duplicates and same-role listings from different boards."""
+    if not enabled:
+        return [job for job in jobs if str(job.get("url") or "").strip()]
+
+    unique_urls = set()
+    role_boards: Dict[Tuple[str, str, str], set] = {}
+    unique: List[dict] = []
     for job in jobs:
-        if job.get("url"):
-            unique.setdefault(job["url"], job)
-    return list(unique.values())
+        url = str(job.get("url") or "").strip()
+        if not url:
+            continue
+        if url in unique_urls:
+            continue
+        unique_urls.add(url)
+
+        title = re.sub(r"[\W_]+", "", str(job.get("title") or "").casefold())
+        company = re.sub(r"[\W_]+", "", str(job.get("company") or "").casefold())
+        location = re.sub(r"[\W_]+", "", str(job.get("location") or "").casefold())
+        board = str(job.get("platform") or job.get("source") or "").strip().casefold()
+        if title and company and location and board:
+            role_key = (title, company, location)
+            boards = role_boards.setdefault(role_key, set())
+            if boards and board not in boards:
+                continue
+            boards.add(board)
+        unique.append(job)
+    return unique
 
 
 def _record_skips(skipped: Optional[List[dict]], skips: List[dict]) -> None:
@@ -365,9 +418,11 @@ def discover_jobs(
     *,
     sources_config: Optional[Dict] = None,
     runtime: Optional[Dict] = None,
+    deduplicate: bool = True,
     cache: Optional[ResultCache] = None,
     circuit: Optional[CircuitBreaker] = None,
     skipped: Optional[List[dict]] = None,
+    salary_from_description: bool = True,
 ) -> Tuple[List[Dict], Dict[str, int]]:
     """Scrape JobSpy boards per title through the adapter orchestrator."""
     if platforms is None:
@@ -421,6 +476,7 @@ def discover_jobs(
                 ["jobspy"],
                 {"jobspy": config},
                 timeout_per_source=_timeout(runtime),
+                deduplicate=deduplicate,
                 cache=cache,
                 circuit=circuit,
             )
@@ -433,7 +489,7 @@ def discover_jobs(
                 progress(idx + 1, len(titles), f"Discovering roles: {title}")
 
     merged = pd.concat(frames, ignore_index=True) if frames else None
-    jobs = _dedupe_jobs(
+    jobs = dedupe_jobs(
         _frame_to_jobs(
             merged,
             location=location,
@@ -442,7 +498,9 @@ def discover_jobs(
             remote_only=remote_only,
             include_hybrid=include_hybrid,
             min_salary=min_salary,
-        )
+            salary_from_description=salary_from_description,
+        ),
+        enabled=deduplicate,
     )
 
     for job in jobs:
@@ -511,6 +569,7 @@ def _discover_sources_core(
     include_hybrid: bool = True,
     min_salary: int = 0,
     platforms: Optional[Dict] = None,
+    deduplicate: bool = True,
 ) -> Tuple[List[Dict], Dict[str, int]]:
     """Discover jobs from the deterministic (no-key) ATS sources.
 
@@ -594,8 +653,9 @@ def _discover_sources_core(
             if _REQUEST_DELAY:
                 time.sleep(_REQUEST_DELAY)
 
-    unique = {job["url"]: job for job in all_jobs if job.get("url")}
-    return list(unique.values()), counts
+    if deduplicate:
+        all_jobs = dedupe_jobs(all_jobs)
+    return all_jobs, counts
 
 
 def discover_sources(
@@ -609,9 +669,11 @@ def discover_sources(
     progress: Optional[Callable[[int, int, str], None]] = None,
     *,
     runtime: Optional[Dict] = None,
+    deduplicate: bool = True,
     cache: Optional[ResultCache] = None,
     circuit: Optional[CircuitBreaker] = None,
     skipped: Optional[List[dict]] = None,
+    salary_from_description: bool = True,
 ) -> Tuple[List[Dict], Dict[str, int]]:
     """Run the native ATS readers through the orchestrator."""
     platforms = platforms or {}
@@ -627,6 +689,7 @@ def discover_sources(
         "remote_only": remote_only,
         "include_hybrid": include_hybrid,
         "min_salary": min_salary,
+        "deduplicate": deduplicate,
     }
     cache = cache if cache is not None else build_cache(runtime)
     circuit = circuit or build_circuit(runtime)
@@ -635,12 +698,13 @@ def discover_sources(
         ["ats"],
         {"ats": runtime["engines"]["ats"]},
         timeout_per_source=_timeout(runtime),
+        deduplicate=deduplicate,
         cache=cache,
         circuit=circuit,
     )
     _record_skips(skipped, skips)
 
-    jobs = _dedupe_jobs(
+    jobs = dedupe_jobs(
         _frame_to_jobs(
             frame,
             location=location,
@@ -648,7 +712,9 @@ def discover_sources(
             remote_only=remote_only,
             include_hybrid=include_hybrid,
             min_salary=min_salary,
-        )
+            salary_from_description=salary_from_description,
+        ),
+        enabled=deduplicate,
     )
     counts: Dict[str, int] = {}
     for job in jobs:
@@ -671,10 +737,12 @@ def discover_engines(
     min_salary: int = 0,
     *,
     runtime: Optional[Dict] = None,
+    deduplicate: bool = True,
     cache: Optional[ResultCache] = None,
     circuit: Optional[CircuitBreaker] = None,
     progress: Optional[Callable[[int, int, str], None]] = None,
     skipped: Optional[List[dict]] = None,
+    salary_from_description: bool = True,
 ) -> Tuple[List[Dict], Dict[str, int]]:
     """Run the optional engines (hirehunt, openroles, jobdrop, apify) if enabled."""
     names = [name for name in (engine_names or []) if name in ADAPTERS]
@@ -695,6 +763,7 @@ def discover_engines(
             "remote_only": remote_only,
             "hours_old": 72,
             "country_indeed": "usa",
+            "deduplicate": deduplicate,
         }
         try:
             frame, skips = scrape_all_sync(
@@ -702,6 +771,7 @@ def discover_engines(
                 names,
                 configs,
                 timeout_per_source=_timeout(runtime),
+                deduplicate=deduplicate,
                 cache=cache,
                 circuit=circuit,
             )
@@ -714,7 +784,7 @@ def discover_engines(
                 progress(idx + 1, len(search_titles), f"Searching {', '.join(names)}: {title}")
 
     merged = pd.concat(frames, ignore_index=True) if frames else None
-    jobs = _dedupe_jobs(
+    jobs = dedupe_jobs(
         _frame_to_jobs(
             merged,
             location=location,
@@ -723,7 +793,9 @@ def discover_engines(
             include_hybrid=include_hybrid,
             min_salary=min_salary,
             filter_titles=True,
-        )
+            salary_from_description=salary_from_description,
+        ),
+        enabled=deduplicate,
     )
     counts: Dict[str, int] = {}
     for job in jobs:

@@ -36,6 +36,80 @@ def test_status_detection_uses_find_spec(monkeypatch):
     assert "pip install" in status["detail"]
 
 
+def _jobspy_only(monkeypatch):
+    """Pretend only the core JobSpy library is present, so conflicts stay visible."""
+    monkeypatch.setattr(
+        engines.importlib.util,
+        "find_spec",
+        lambda name: object() if name == "jobspy" else None,
+    )
+
+
+def test_install_refuses_a_conflicting_engine(monkeypatch):
+    calls = []
+    _jobspy_only(monkeypatch)
+
+    results = engines.install_engines(
+        ["jobdrop"], runner=lambda args: calls.append(args) or _Completed()
+    )
+
+    assert calls == []
+    assert results["jobdrop"]["blocked"] is True
+    assert results["jobdrop"]["installed"] is False
+    assert "curl" in results["jobdrop"]["detail"]
+
+
+def test_install_allows_a_conflict_when_overridden(monkeypatch):
+    calls = []
+    _jobspy_only(monkeypatch)
+
+    engines.install_engines(
+        ["jobdrop"],
+        runner=lambda args: calls.append(args) or _Completed(),
+        allow_conflicts=True,
+    )
+
+    assert calls[0] == ["--no-deps", "jobdrop>=2.10,<3"]
+    flat = " ".join(item for call in calls for item in call).lower()
+    assert "curl" not in flat, "the conflicting pin must stay out of every pip call"
+
+
+def test_split_install_keeps_conflicting_packages_out(monkeypatch):
+    _jobspy_only(monkeypatch)
+    blocked = engines.ENGINE_CATALOG["jobdrop"].conflict_packages
+
+    dependencies = engines._dependencies_without("jobdrop", blocked)
+
+    assert dependencies
+    assert not any("curl" in requirement.lower() for requirement in dependencies)
+
+
+def test_missing_engines_hide_the_conflicting_engine(monkeypatch):
+    _jobspy_only(monkeypatch)
+    assert "jobdrop" not in engines.missing_engines()
+    assert "jobdrop" in engines.missing_engines(include_conflicting=True)
+
+
+def test_status_table_flags_the_conflict(monkeypatch):
+    _jobspy_only(monkeypatch)
+    assert "conflicts with JobSpy" in engines.status_table()
+
+
+def test_extras_install_compatible_engines_in_one_resolution():
+    """`pip install -e ".[all-engines]"` must stay resolvable next to JobSpy."""
+    import tomllib
+
+    with open("pyproject.toml", "rb") as handle:
+        extras = tomllib.load(handle)["project"]["optional-dependencies"]
+
+    combined = " ".join(extras["all-engines"]).lower()
+    assert "hirehunt" in combined
+    assert "openroles" in combined
+    assert "apify-client" in combined
+    assert "jobdrop" not in combined
+    assert "jobdrop" not in extras, "a jobdrop extra cannot resolve with the core deps"
+
+
 def test_unknown_engine_status():
     status = engines.engine_status("mystery")
     assert status["installed"] is False
@@ -52,8 +126,26 @@ def test_status_table_marks_missing_engines(monkeypatch):
 
 def test_install_specs_expand_all():
     specs = engines.install_specs(["all"])
-    assert any(spec.startswith("jobdrop") for spec in specs)
+    assert any(spec.startswith("hirehunt") for spec in specs)
+    assert any(spec.startswith("openroles") for spec in specs)
     assert not any(spec.startswith("python-jobspy") for spec in specs)
+    # jobdrop pins an older curl-cffi, so "all" leaves it out.
+    assert not any(spec.startswith("jobdrop") for spec in specs)
+
+
+def test_install_specs_include_jobdrop_when_named():
+    assert engines.install_specs(["jobdrop"]) == ["jobdrop>=2.10,<3"]
+
+
+def test_conflict_warnings_name_the_blocker():
+    warnings = engines.conflict_warnings(["jobdrop"])
+    assert warnings
+    assert "JobSpy" in warnings[0] or "jobspy" in warnings[0]
+    assert "curl" in warnings[0]
+
+
+def test_conflict_warnings_ignore_clean_engines():
+    assert engines.conflict_warnings(["openroles", "hirehunt"]) == []
 
 
 def test_install_specs_reject_unknown_engine():

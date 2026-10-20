@@ -1,5 +1,6 @@
 import os
 
+import pandas as pd
 import requests
 
 import engine.discovery as discovery
@@ -401,3 +402,64 @@ def test_builtin_source_ignores_platforms_key(monkeypatch):
     monkeypatch.setattr(discovery, "fetch_builtin", lambda category: calls.append(category) or [])
     discovery.discover_sources({}, titles=["writer"], platforms={"builtinnyc": False})
     assert calls == ["jobs/legal"]
+
+
+def _pay_frame(description: str, **overrides) -> pd.DataFrame:
+    row = {
+        "title": "Technical Writer",
+        "company": "Acme",
+        "location": "New York, NY",
+        "url": "https://example.com/jobs/1",
+        "description": description,
+        "salary_min": 0,
+        "salary_max": 0,
+    }
+    row.update(overrides)
+    return pd.DataFrame([row])
+
+
+def test_frame_to_jobs_reads_pay_from_description():
+    jobs = discovery._frame_to_jobs(
+        _pay_frame("Base salary: $90,000 - $110,000 per year."), location="New York, NY"
+    )
+    assert jobs[0]["min_amount"] == 90000.0
+    assert jobs[0]["max_amount"] == 110000.0
+    assert jobs[0]["currency"] == "USD"
+    assert jobs[0]["salary_period"] == "year"
+
+
+def test_frame_to_jobs_keeps_structured_pay_over_description():
+    frame = _pay_frame("Pay: $20 - $25 per hour.", salary_min=100000, salary_max=120000)
+    jobs = discovery._frame_to_jobs(frame, location="New York, NY")
+    assert jobs[0]["min_amount"] == 100000.0
+    assert jobs[0]["max_amount"] == 120000.0
+    assert jobs[0]["salary_period"] == "year"
+
+
+def test_frame_to_jobs_can_skip_description_pay():
+    jobs = discovery._frame_to_jobs(
+        _pay_frame("Base salary: $90,000 - $110,000 per year."),
+        location="New York, NY",
+        salary_from_description=False,
+    )
+    assert jobs[0]["min_amount"] == 0
+    assert jobs[0]["max_amount"] == 0
+
+
+def test_frame_to_jobs_maps_aggregator_interval():
+    frame = _pay_frame("", salary_min=45, salary_max=55, interval="hourly")
+    jobs = discovery._frame_to_jobs(frame, location="Remote", min_salary=65000)
+    assert jobs[0]["salary_period"] == "hour"
+    assert [job["title"] for job in jobs] == ["Technical Writer"]
+
+
+def test_frame_to_jobs_filters_hourly_pay_by_annual_floor():
+    kept = discovery._frame_to_jobs(
+        _pay_frame("Hourly rate: $45 - $55 per hour."), location="Remote", min_salary=65000
+    )
+    dropped = discovery._frame_to_jobs(
+        _pay_frame("Hourly rate: $20 - $25 per hour."), location="Remote", min_salary=65000
+    )
+    assert [job["title"] for job in kept] == ["Technical Writer"]
+    assert dropped == []
+

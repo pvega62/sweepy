@@ -76,6 +76,28 @@ platforms:
     #   domain: "careers.mycompany.com"
     #   enabled: true
 
+# ─── Job engines ─────────────────────────────────
+# Sweepy 3.0 runs every enabled engine in parallel behind one adapter.
+#
+#   jobspy    built in   LinkedIn, Indeed, Glassdoor, ZipRecruiter (+ Bayt, Naukri,
+#                        BDJobs, HelloWork). Supports proxies, User-Agent, and a
+#                        description toggle.
+#   ats       built in   Greenhouse, Ashby, Lever, Workable, and Built In NYC, read
+#                        straight from each employer's public board.
+#   hirehunt  download   India-first boards plus LinkedIn and Indeed APIs.
+#   openroles download   Greenhouse, Lever, Ashby, and Workday boards you name.
+#   jobdrop   download   33 boards including Google and Wellfound.
+#   apify     download   Managed actors. Needs APIFY_TOKEN.
+#
+# Install an optional engine from the wizard (Sweepy's Toolbox > Download job engines)
+# or with `sweepy --install-engines all`.
+#
+# `enabled` is optional. Leave it out and Sweepy runs jobspy plus the native
+# applicant tracking system (ATS) readers. It also turns on any optional engine
+# whose block sets `enabled: true` and has the inputs it needs. Listing engines
+# explicitly pins the set instead.
+# enabled: [jobspy, ats]
+
 # ─── Deterministic (no-key) sources ──────────────
 # Empty boards/orgs/slugs/categories fall back to the curated seed lists in
 # data/sources/. Each source also honors its platforms.<x> flag.
@@ -85,6 +107,13 @@ sources:
     indeed: true
     glassdoor: true
     zip_recruiter: true
+    # Newer shape. It overrides the board booleans.
+    # sites: [linkedin, indeed, glassdoor, zip_recruiter]
+    # Proxies are opt-in. Sweepy reads them only from this file.
+    # proxies: ["user:pass@host:port"]
+    # Descriptions supply the scoring text. Turn this off only when you accept
+    # weaker match scores in exchange for a faster sweep.
+    fetch_descriptions: true
   greenhouse:
     enabled: true
     boards: []
@@ -101,11 +130,40 @@ sources:
     enabled: true
     categories: []
 
+  # Optional engines. Install the library first, then uncomment a block.
+  # jobdrop also conflicts with JobSpy's curl_cffi pin, so install it separately
+  # with: sweepy --install-engines jobdrop --allow-engine-conflicts
+  # hirehunt:
+  #   sources: [linkedin, indeed, naukri, internshala, shine]
+  # openroles:
+  #   ats: [greenhouse, lever, ashby, workday]
+  #   companies: [figma, stripe, notion]   # required to enable OpenRoles; it reads boards you name
+  # jobdrop:
+  #   sites: [linkedin, indeed, google, glassdoor]
+  #   headless: true
+  #   fetch_descriptions: true
+  # apify:
+  #   actor: curious_coder/linkedin-jobs-scraper   # reads APIFY_TOKEN from the environment
+
+# ─── Engine performance ──────────────────────────
+# Results cache for an hour, so repeat runs of the same query return instantly.
+cache:
+  enabled: true
+  ttl_seconds: 3600
+
+# One slow engine can't stall the sweep. After five failures, Sweepy pauses that
+# engine for 30 seconds.
+orchestrator:
+  timeout_per_source_seconds: 180
+  circuit_breaker:
+    failure_threshold: 5
+    cooldown_seconds: 30
+
 # ─── Report Settings ─────────────────────────────
 report:
   # "cards" (default) renders the curated card layout; "legacy" keeps the old layout.
   style: "cards"
-  cards_per_page: 4
+  cards_per_page: 6
   max_cards: 24       # 0 = unlimited
   destinations: []    # extra directories to copy the PDF into
 

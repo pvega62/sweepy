@@ -14,6 +14,12 @@ DEFAULT_APIFY_ACTOR = "curious_coder/linkedin-jobs-scraper"
 DEFAULT_USER_AGENT = None
 
 DEFAULT_CACHE = {"enabled": True, "ttl_seconds": 3600, "path": None}
+DEFAULT_HISTORY = {
+    "enabled": True,
+    "retention_days": 4,
+    "match": "url+role",
+    "path": None,
+}
 DEFAULT_ORCHESTRATOR = {
     "timeout_per_source_seconds": 180,
     "circuit_breaker": {"failure_threshold": 5, "cooldown_seconds": 30},
