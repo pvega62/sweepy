@@ -117,7 +117,10 @@ def test_status_table_flags_the_conflict(monkeypatch):
 
 def test_extras_install_compatible_engines_in_one_resolution():
     """`pip install -e ".[all-engines]"` must stay resolvable next to JobSpy."""
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10 has no tomllib
+        import tomli as tomllib
 
     with open("pyproject.toml", "rb") as handle:
         extras = tomllib.load(handle)["project"]["optional-dependencies"]
