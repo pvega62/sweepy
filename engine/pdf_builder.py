@@ -65,7 +65,7 @@ def create_job_card(job: dict, rank: int, styles: dict) -> Table:
         Paragraph(f"<b>Company:</b> {company} &nbsp;|&nbsp; <b>Location:</b> {location} ({platform})", styles['BodyStyle']),
         Paragraph(f"<b>Compensation:</b> {comp_str}", styles['BodyStyle']),
         Paragraph(f"<b>Key Matches:</b> {key_matches} &nbsp;|&nbsp; <b>Missing:</b> {missing}", styles['SmallStyle']),
-        Paragraph(f"<b>Playbook:</b> {playbook}", styles['PlaybookStyle']),
+        Paragraph(f"<b>Application Tip:</b> {playbook}", styles['PlaybookStyle']),
         Paragraph(f"<b>Apply:</b> {link_html} &nbsp;&nbsp; {badge_html}", styles['SmallStyle'])
     ]
 

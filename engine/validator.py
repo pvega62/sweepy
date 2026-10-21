@@ -20,9 +20,10 @@ _SOFT_404_DOMAINS = ("ashbyhq.com", "greenhouse.io", "lever.co")
 # Statuses that mean "cannot verify", never "dead". Rate limiting and bot protection
 # answer with these codes while the posting stays live: a measured request returned
 # HEAD 429 while a GET on the same URL returned 200 with the full 312 KB job page.
-# LinkedIn, Indeed, and Glassdoor routinely answer HEAD with 403 or 429, so pruning
-# on these codes silently deletes valid postings.
-_UNVERIFIED_STATUSES = frozenset({403, 408, 425, 429, 500, 502, 503, 504})
+# LinkedIn, Indeed, and Glassdoor routinely answer HEAD with 401, 403, or 429, so
+# pruning on these codes silently deletes valid postings. Indeed answers 401 for
+# every job ID, including ones that never existed, so that code proves nothing.
+_UNVERIFIED_STATUSES = frozenset({401, 403, 408, 425, 429, 500, 502, 503, 504})
 
 
 def _content_length(response: requests.Response) -> int:

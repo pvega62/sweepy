@@ -59,7 +59,28 @@ class SweepSession:
             for key, value in fields.items():
                 if value is not None:
                     job[key] = value
+            if fields.get("match_value") is not None:
+                self._rerank()
             return dict(job)
+
+    def _rerank(self) -> None:
+        """Renumber ranks so a report sorted by rank matches the assessed scores.
+
+        Assessment overwrites the deterministic overlap scores that produced the
+        original ranks, so leaving the old numbers in place lets a report headed
+        "Highest to Lowest Match %" list a 58% card above a 60% one. Cards that
+        share a score keep their previous relative order.
+        """
+        ordered = sorted(
+            self._jobs.values(),
+            key=lambda job: (-int(job.get("match_value") or 0), int(job.get("rank") or 0)),
+        )
+        self._order = [job["id"] for job in ordered]
+        for rank, job in enumerate(ordered, start=1):
+            job["rank"] = rank
+            # Page placement is derived from rank, so drop the previous labels.
+            job.pop("page", None)
+            job.pop("page_theme", None)
 
     def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

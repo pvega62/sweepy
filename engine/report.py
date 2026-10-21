@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from io import BytesIO
 from typing import List
 from xml.sax.saxutils import escape as _xml_escape
@@ -194,7 +195,7 @@ def _render_card(job: dict, styles: dict) -> Table:
         Spacer(1, 0.3),
         Paragraph(f"<b>Key Requirements:</b> {requirements}", styles["ReqStyle"]),
         Spacer(1, 0.3),
-        Paragraph(f"<b>Candidate Alignment:</b> <font color=\"#0F766E\">{alignment}</font>", styles["ReqStyle"]),
+        Paragraph(f"<b>Application Tip:</b> <font color=\"#0F766E\">{alignment}</font>", styles["ReqStyle"]),
         Spacer(1, 0.3),
         Paragraph(
             f"<b>Comp &amp; Benefits:</b> <font color=\"#047857\"><b>{comp}</b></font> "
@@ -258,6 +259,25 @@ def _default_playbook(cards: List[dict], profile: dict) -> str:
         parts.append(f"<b>- RESUME TARGETING:</b> Submit {routing}.")
 
     return "".join(parts)
+
+
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.S)
+
+
+def playbook_to_markup(text: str) -> str:
+    """Convert playbook prose into ReportLab paragraph markup.
+
+    The playbook arrives as prose, so ``&`` and angle brackets get escaped instead of
+    reaching ReportLab's parser, and newlines become line breaks. ``**bold**`` still
+    adds emphasis.
+    """
+    lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    markup = [_BOLD_RE.sub(r"<b>\1</b>", _xml_escape(line)).strip() for line in lines]
+    while markup and not markup[0]:
+        markup.pop(0)
+    while markup and not markup[-1]:
+        markup.pop()
+    return "<br/>".join(markup)
 
 
 def _playbook_table(playbook_html: str, styles: dict) -> Table:
@@ -334,21 +354,26 @@ def _paginate(
     while next_card < len(cards):
         page_num = len(pages) + 1
         page_jobs = []
-        used_height = playbook_height
+        used_height = 0.0
 
         while next_card + len(page_jobs) < len(cards) and len(page_jobs) < per_page:
-            candidate_jobs = page_jobs + [cards[next_card + len(page_jobs)]]
+            index = next_card + len(page_jobs)
+            candidate_jobs = page_jobs + [cards[index]]
             header = _page_header(page_num, candidate_jobs, title_text, meta_html, styles)
             header_height = sum(
                 _flowable_height(item, page_width, measurement_canvas)
                 for item in header
             )
-            card, gap = card_blocks[next_card + len(page_jobs)]
+            card, gap = card_blocks[index]
             card_height = (
                 _flowable_height(card, page_width, measurement_canvas)
                 + _flowable_height(gap, page_width, measurement_canvas)
             )
-            if page_jobs and header_height + used_height + card_height > page_height:
+            # The playbook prints once, after the final card, so only the card that
+            # completes the set reserves room for it. Reserving on every page cost
+            # card slots on each page for a box that renders on the last one.
+            reserve = playbook_height if index == len(cards) - 1 else 0.0
+            if page_jobs and header_height + used_height + card_height + reserve > page_height:
                 break
             page_jobs.append(candidate_jobs[-1])
             used_height += card_height
@@ -371,7 +396,8 @@ def build_report(jobs: List[dict], output_path: str, profile: dict, playbook: st
     styles = _make_styles()
     title_text = _title_text(profile)
     meta_html = _meta_html(profile, cards)
-    playbook_table = _playbook_table(playbook or _default_playbook(cards, profile), styles)
+    playbook_markup = playbook_to_markup(playbook) if playbook.strip() else ""
+    playbook_table = _playbook_table(playbook_markup or _default_playbook(cards, profile), styles)
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     temp_path = output_path + ".tmp.pdf"

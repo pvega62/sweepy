@@ -98,6 +98,7 @@ Builds and saves a YAML configuration profile in the `profiles/` directory.
   - `cache_config`: optional cache settings with `enabled` and `ttl_seconds` fields.
   - `orchestrator_config`: optional `timeout_per_source_seconds` and `circuit_breaker` settings (`failure_threshold`, `cooldown_seconds`).
   - `history_config`: optional cross-run settings with `enabled`, `retention_days` (default `4`), `match` (`url` or `url+role`), and `path` fields.
+  - `job_tracking`: set the CSV tracking columns on or off. Defaults to `True`.
   - Board keys: `BOARD_CATALOG` in `engine/engines.py` lists every searchable board per engine (8 `jobspy`, 5 `ats`, 12 `hirehunt`, 4 `openroles`, 33 `jobdrop`, 1 `apify`). The wizard's platform step reads that catalog, which means a new board doesn't need extra UI code. Headless callers set boards through `sources_config` (`sources.jobspy.sites`, `sources.hirehunt.sources`, `sources.openroles.ats`, `sources.jobdrop.sites`).
   - `output_filename`: optional explicit destination YAML path. Defaults to `profiles/{name}_{title}.yaml`.
 
@@ -159,6 +160,7 @@ Rebuilds PDF, PNG, CSV, or JSON artifacts from existing sweep results without re
   - `formats`: list of formats to export. Defaults to `["pdf"]`. Can include `"pdf"`, `"csv"`, `"json"`, or `"png"`. PNG rasterizes the report PDF, so requesting it also writes the PDF.
   - `candidate_name`: name to render in the header of the regenerated PDF. Defaults to `"Job Seeker"`.
   - `output_dir`: optional target output folder. If omitted, writes to `results/`.
+  - `job_tracking`: optional override for the profile's `export.tracking` setting on a CSV export. Leave unset to follow the profile.
 
 ### 6. `get_jobs`
 Returns the card records held in the current sweep session, ranked by match.
@@ -197,7 +199,9 @@ Renders the cards PDF from the current session, writing through the sandbox.
   - `profile_stem`: optional profile identifier to load a persisted session from disk.
   - `results_dir`: results directory. Defaults to `"results"`.
   - `output_filename`: optional explicit output PDF path (must stay inside the workspace).
-  - `playbook`: optional playbook text. When empty, Sweepy generates a deterministic playbook.
+  - `playbook`: optional plain-text strategy note. Sweepy escapes ampersands and angle brackets, converts newlines to line breaks, and renders `**bold**`. The note is saved with the session, so a later call without it reuses the saved text. Empty with nothing saved generates a deterministic playbook.
+
+Returns `pdf_report`, `pages`, `card_count`, and `playbook_saved`.
 
 ### 10. `convert_document`
 Converts any supported document to PDF.
@@ -250,6 +254,8 @@ Call `run_sweep` with the profile path. Note to the user that live board scrapin
 When the response reads `sweep_status: "running"`, call `get_sweep_status` with the returned `job_id` and repeat until it reads `completed`. Report the step label while you wait so the user sees progress instead of a stalled request.
 
 For the default workflow, call `get_jobs` and inspect the available details for the roles. Compare each assessable role with the candidate's resume and preferences, then call `submit_judgments` with an independently determined `match_pct` and evidence-grounded summary, requirements, and alignment. Assess all relevant cards returned by `get_jobs`; do not copy keyword scores or fabricate missing details. If evidence is insufficient, say so and retain the keyword-overlap label for those roles. Call `render_report` after submitting judgments.
+
+Send the whole assessment as one `judgments` list, with a `job_id` and `match_pct` per entry, so 24 roles cost one call instead of 24. `run_sweep` reports `assessment_mode` and `assessed_count`; the default `agent` mode makes `render_report` refuse a mixed report and return the unassessed job ids. `report.assessment: keyword` restores keyword-only reports, and `SWEEPY_REQUIRE_JUDGMENTS=1` extends the gate to every profile and to `export_report`.
 
 Use deterministic scores without LLM judgment only when the user specifically asks for keyword-only results or the role evidence is insufficient for responsible judgment.
 

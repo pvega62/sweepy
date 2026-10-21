@@ -1,80 +1,108 @@
 # ─────────────────────────────────────────────────
-# Sweepy — Sample Profile Configuration
+# Sweepy — Fill-In Profile Template
 # ─────────────────────────────────────────────────
+#
+# This file is the manual route. Fill it in, run it, and skip both the wizard
+# prompts and the MCP server.
+#
+# 1. Copy the file under a name of your own.
+#      PowerShell:   Copy-Item profiles\template_custom.yaml profiles\my_search.yaml
+#      macOS/Linux:  cp profiles/template_custom.yaml profiles/my_search.yaml
+# 2. Fill in the four REQUIRED values below.
+# 3. Run your copy.
+#      sweepy --profile profiles/my_search.yaml
+#
+# Sweepy records that path as your last profile, so `sweepy --run` repeats this
+# search later. When the `sweepy` command is not on PATH, run
+# `python swee.py --profile profiles/my_search.yaml` instead.
+#
+# Every setting you leave out falls back to the default named in its comment.
+# The complete setting list lives at:
+# https://pvega62.github.io/software/docs/sweepy/reference/configuration-reference
 
-# Your name (appears in the PDF report header)
-name: "Job Seeker"
+# ─── You ─────────────────────────────────────────
+# REQUIRED. Prints in the PDF header.
+name: "Your Name"
+
+# Set true to write rotating debug logs under logs/.
+# debug: false
 
 # ─── Job Search Settings ──────────────────────────
 search:
-  # List every job title you want to find.
+  # REQUIRED. One or more titles. Each title runs as its own query, so keep the
+  # list to roles you would actually accept.
   titles:
-    - "Front End Developer"
-    - "React Engineer"
+    - "Your Job Title"
+    - "A Related Title"
 
-  # Your target city and state.
-  location: "New York, NY"
+  # REQUIRED. City and state code, such as "Austin, TX". Remote-only searches
+  # still use it to rank nearby postings.
+  location: "Your City, ST"
 
-  # Set to true to ONLY see remote roles.
+  # true keeps remote postings only.
   remote_only: false
 
-  # Set to false to exclude hybrid positions.
+  # false drops hybrid postings.
   include_hybrid: true
 
-  # Minimum annual salary filter (optional, leave as 0 to skip).
+  # Annual salary floor. 0 turns the filter off.
   min_salary: 0
+
+  # true reads pay from the posting text when a board publishes no pay field.
+  salary_from_description: true
 
 # ─── Resume Settings ─────────────────────────────
 resume:
-  # The full path to your resume PDF on your computer.
-  # Windows users: Use double backslashes (\\) or forward slashes (/)
+  # REQUIRED. Full path to your resume in .pdf or .docx form.
+  # Windows accepts C:/Users/you/resume.pdf and C:\\Users\\you\\resume.pdf.
+  # On Windows 11, select the file in File Explorer and press Ctrl+Shift+C to
+  # copy its path.
   path: "C:/path/to/your/resume.pdf"
 
-  # Must-have skills to prioritize for the match percentage.
+  # Optional. Skills that lift a score when a posting mentions them. Replace
+  # both entries, or set the list to [] to score from resume keywords alone.
   must_have_skills:
-    - "React"
-    - "TypeScript"
-    - "JavaScript"
-    - "CSS"
+    - "Your Strongest Skill"
+    - "Another Skill"
 
+  # Multiplier for resume keywords in the score. 1.5 favors your resume terms.
   keywords_weight: 1.5
 
-  # Optional: interchangeable terms. Sweepy matches every member of a group in both
-  # directions, so a posting that writes `docs-as-code` matches a resume that writes
-  # `documentation as code`. Each group needs at least two terms.
-  synonyms:
-    - [docs-as-code, documentation as code]
+  # Optional. Interchangeable terms. Sweepy matches every member of a group in
+  # both directions, so `electronic discovery` in a posting matches `e-discovery`
+  # on your resume. Each group needs at least two terms. Uncomment and replace:
+  # synonyms:
+  #   - [electronic discovery, e-discovery, ediscovery]
+  #   - [front end, frontend, front-end]
 
-  # Optional: multiple resume tracks for dual-targeting. The best track is chosen per
-  # job by keyword overlap; leave empty to use `path` as a single implicit track.
-  tracks:
-    - name: "Tech Writer Resume"
-      path: "C:/path/to/tech_writer.pdf"
-      color: "#1D4ED8"
-      route_keywords: ["api", "docs-as-code", "developer"]
-    - name: "UX Writer Resume"
-      path: "C:/path/to/ux_writer.pdf"
-      color: "#7E22CE"
-      route_keywords: ["ux", "content design", "microcopy"]
+  # Optional. Several resumes for different targets. Sweepy picks the best track
+  # for each posting by keyword overlap. An empty list scores with `path` alone.
+  tracks: []
+  # tracks:
+  #   - name: "Primary Resume"
+  #     path: "C:/path/to/primary.pdf"
+  #     color: "#1D4ED8"
+  #     route_keywords: ["api", "documentation", "developer"]
+  #   - name: "Secondary Resume"
+  #     path: "C:/path/to/secondary.pdf"
+  #     color: "#7E22CE"
+  #     route_keywords: ["ux", "content design", "microcopy"]
 
 # ─── Platform Settings ────────────────────────────
-# Set each platform to true or false to enable or disable it.
+# true turns a board on. Every flag below ships on except `aggregators`.
 platforms:
   greenhouse: true
   ashby: true
   lever: true
   workable: true
-  aggregators: false   # Free feeds like Remotive, Adzuna
+  aggregators: false   # Free feeds like Remotive and Adzuna
 
-  # Optional: add custom ATS endpoints or company career domains.
-  custom:
-    - name: "SmartRecruiters"
-      domain: "smartrecruiters.com"
-      enabled: true
-    # Add more entries below as needed:
-    # - name: "My Company"
-    #   domain: "careers.mycompany.com"
-    #   enabled: true
+  # Optional. Extra ATS endpoints or company career domains. Uncomment to add:
+  custom: []
+  # custom:
+  #   - name: "SmartRecruiters"
+  #     domain: "smartrecruiters.com"
+  #     enabled: true
 
 # ─── Job engines ─────────────────────────────────
 # Sweepy 3.0 runs every enabled engine in parallel behind one adapter.
@@ -96,12 +124,12 @@ platforms:
 # applicant tracking system (ATS) readers. It also turns on any optional engine
 # whose block sets `enabled: true` and has the inputs it needs. Listing engines
 # explicitly pins the set instead.
-# enabled: [jobspy, ats]
 
-# ─── Deterministic (no-key) sources ──────────────
+# ─── Sources ─────────────────────────────────────
 # Empty boards/orgs/slugs/categories fall back to the curated seed lists in
 # data/sources/. Each source also honors its platforms.<x> flag.
 sources:
+  # enabled: [jobspy, ats]
   jobspy:
     linkedin: true
     indeed: true
@@ -116,19 +144,20 @@ sources:
     fetch_descriptions: true
   greenhouse:
     enabled: true
-    boards: []
+    boards: []          # e.g. ["gitlab", "cloudflare"]
   ashby:
     enabled: true
-    orgs: []
+    orgs: []            # e.g. ["modal", "camunda"]
   lever:
     enabled: true
-    companies: []
+    companies: []       # e.g. ["leverdemo", "spotify"]
   workable:
     enabled: true
-    slugs: []
+    slugs: []           # e.g. ["soda-data-nv"]
   builtinnyc:
     enabled: true
-    categories: []
+    categories: []      # e.g. ["jobs/technical-writer"]
+    detail_pages: false # read each posting's full text; Built In rate-limits these
 
   # Optional engines. Install the library first, then uncomment a block.
   # jobdrop also conflicts with JobSpy's curl_cffi pin, so install it separately
@@ -151,6 +180,14 @@ cache:
   enabled: true
   ttl_seconds: 3600
 
+# Sweepy hides postings it already reported. A posting can return after
+# retention_days pass. `path: null` uses ~/.sweepy/history.db.
+history:
+  enabled: true
+  retention_days: 4
+  match: "url+role"
+  path: null
+
 # One slow engine can't stall the sweep. After five failures, Sweepy pauses that
 # engine for 30 seconds.
 orchestrator:
@@ -166,9 +203,21 @@ report:
   cards_per_page: 6
   max_cards: 24       # 0 = unlimited
   destinations: []    # extra directories to copy the PDF into
+  # MCP only. "agent" blocks a keyword-only render until every card carries a
+  # judgment; "keyword" allows one. The CLI writes the PDF directly and skips it.
+  # assessment: "agent"
 
 # ─── Export Settings ──────────────────────────────
 export:
   # Comma-separated list of output formats. Options: pdf, csv, json
   format: "pdf,csv"
   output_dir: "results"
+
+  # Append job-tracking columns to the CSV: date_applied, status, interview_stage,
+  # offer_amount, offer_date, follow_up_date, contact, and notes. Values you enter
+  # carry over to the next sweep of this profile. Set to false for raw data only.
+  tracking: true
+
+  # Characters of posting text saved in the CSV and JSON. Sweepy cuts on a
+  # sentence boundary. Set to 0 to keep the whole posting.
+  description_chars: 1000

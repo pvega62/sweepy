@@ -108,3 +108,63 @@ def test_get_tracks_implicit_single_track():
     tracks = get_tracks(profile)
     assert len(tracks) == 1
     assert tracks[0]["name"] == "Tech Writer"
+
+
+def test_enrich_truncates_description_to_the_default_limit():
+    card = enrich_jobs([_job(description="alpha " * 400)], _profile())[0]
+    assert len(card["description"]) <= 1000
+    assert card["description"].endswith("…")
+
+
+def test_enrich_reads_description_chars_from_the_export_settings():
+    profile = _profile()
+    profile["export"] = {"description_chars": 60}
+    card = enrich_jobs([_job(description="alpha beta gamma delta. " * 20)], profile)[0]
+    assert len(card["description"]) <= 61
+
+
+def test_enrich_zero_description_chars_keeps_the_whole_posting():
+    profile = _profile()
+    profile["export"] = {"description_chars": 0}
+    text = "alpha beta gamma delta. " * 20
+    card = enrich_jobs([_job(description=text)], profile)[0]
+    assert card["description"] == text.strip()
+
+
+def test_enrich_strips_html_from_the_description_excerpt():
+    card = enrich_jobs([_job(description="<p>Write <b>API</b> docs.</p>")], _profile())[0]
+    assert card["description"] == "Write API docs."
+
+
+def test_enrich_carries_the_scored_fields_the_csv_exports():
+    job = _job(
+        key_matches=["python", "docs"],
+        missing_skills=["figma"],
+        unverified=True,
+        currency="EUR",
+    )
+    card = enrich_jobs([job], _profile())[0]
+    assert card["match_score"] == card["match_value"] == 87
+    assert card["badge"] == "Slate"
+    assert card["unverified"] is True
+    assert card["min_amount"] == 100000
+    assert card["max_amount"] == 120000
+    assert card["currency"] == "EUR"
+    assert card["key_matches"] == ["python", "docs"]
+    assert card["missing_skills"] == ["figma"]
+    assert card["playbook"] == "Highlight your Python experience."
+
+
+def test_export_fills_every_column_from_a_scored_job(tmp_path):
+    import csv
+
+    from engine.exporter import EXPORT_COLUMNS, export_to_csv
+
+    job = _job(key_matches=["python", "docs"], missing_skills=["figma"])
+    path = tmp_path / "sweep.csv"
+    export_to_csv(enrich_jobs([job], _profile()), str(path), tracking=True)
+    with path.open(newline="", encoding="utf-8") as handle:
+        row = next(csv.DictReader(handle))
+    assert [col for col in EXPORT_COLUMNS if not str(row[col]).strip()] == []
+    assert row["key_matches"] == "python, docs"
+    assert row["match_score"] == "87"

@@ -1,3 +1,4 @@
+import csv
 import os
 import sys
 import time
@@ -322,6 +323,52 @@ def test_pipeline_all_formats(tmp_path, monkeypatch):
     profile["export"]["format"] = "pdf,csv,json"
     result = swee.run_sweep_pipeline(profile_dict=profile)
     assert set(result["reports"].keys()) == {"pdf", "csv", "json"}
+
+
+def test_pipeline_writes_tracking_columns_and_carries_values(tmp_path, monkeypatch):
+    from engine.exporter import export_to_csv as real_export_to_csv
+
+    jobs = _jobs(2)
+    _mock_engine(monkeypatch, jobs)
+    monkeypatch.setattr(swee, "export_to_csv", real_export_to_csv)
+
+    profile = _profile(str(tmp_path))
+    profile["export"]["format"] = "csv"
+    profile["history"] = {"enabled": False}
+
+    first = swee.run_sweep_pipeline(profile_dict=profile)
+    csv_path = first["reports"]["csv"]
+    with open(csv_path, newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert "date_applied" in rows[0] and "notes" in rows[0]
+
+    rows[0]["status"] = "Applied"
+    with open(csv_path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    time.sleep(1.1)
+    second = swee.run_sweep_pipeline(profile_dict=profile)
+    with open(second["reports"]["csv"], newline="", encoding="utf-8") as handle:
+        carried = list(csv.DictReader(handle))
+    assert carried[0]["status"] == "Applied"
+
+
+def test_pipeline_omits_tracking_columns_when_disabled(tmp_path, monkeypatch):
+    from engine.exporter import export_to_csv as real_export_to_csv
+
+    _mock_engine(monkeypatch, _jobs(1))
+    monkeypatch.setattr(swee, "export_to_csv", real_export_to_csv)
+
+    profile = _profile(str(tmp_path))
+    profile["export"]["format"] = "csv"
+    profile["export"]["tracking"] = False
+
+    result = swee.run_sweep_pipeline(profile_dict=profile)
+    with open(result["reports"]["csv"], newline="", encoding="utf-8") as handle:
+        header = next(csv.reader(handle))
+    assert "date_applied" not in header
 
 
 def test_pipeline_uses_track_scoring_when_tracks_defined(tmp_path, monkeypatch):

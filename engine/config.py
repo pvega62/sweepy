@@ -43,6 +43,7 @@ from engine.engines import (
 )
 from engine.logging import recent_log_lines
 from engine.sweep_config import legacy_profile_notice, normalize_sources, validate_sources
+from engine.tracking import tracking_enabled
 from engine.updater import update_sweepy
 
 log = logging.getLogger("sweepy.engine.config")
@@ -859,6 +860,17 @@ def _ask_formats(current=None):
         log.warning("Select at least one export format.")
 
 
+def _ask_job_tracking(current=None):
+    default = True if current is None else bool(current)
+    return _ask(
+        questionary.confirm(
+            "Add job-tracking columns to the CSV? (date applied, status, interview stage, "
+            "offer, follow-up date, contact, notes)",
+            default=default,
+        )
+    )
+
+
 def _ask_tracks(current=None):
     existing = list(current or [])
     if existing:
@@ -1417,6 +1429,7 @@ def _build_steps():
         _Step("custom_platforms", "Custom platforms", _ask_custom_platforms),
         _Step("must_have_skills", "Must-have skills", _ask_skills),
         _Step("formats", "Export formats", _ask_formats),
+        _Step("job_tracking", "Job tracking columns", _ask_job_tracking),
         _Step("tracks", "Resume tracks", _ask_tracks),
         _Step("debug", "Debug logging", _ask_debug),
     ]
@@ -1663,6 +1676,7 @@ def _answers_from_profile(profile_data: Dict) -> Dict:
         },
         "must_have_skills": list(resume.get("must_have_skills") or []),
         "formats": formats,
+        "job_tracking": tracking_enabled(export),
         "tracks": [dict(t) for t in (resume.get("tracks") or [])],
         "debug": bool(profile_data.get("debug")),
     }
@@ -1730,6 +1744,7 @@ def _merge_answers(profile_data: Dict, answers: Dict) -> Dict:
     export = dict(merged.get("export") or {})
     export["format"] = ",".join(answers.get("formats") or ["pdf", "csv"])
     export.setdefault("output_dir", "results")
+    export["tracking"] = bool(answers.get("job_tracking", True))
     merged["export"] = export
 
     merged["debug"] = bool(answers.get("debug"))
@@ -1754,6 +1769,8 @@ MENU_EDIT = "Edit an existing profile"
 MENU_DEBUG = "Toggle debug logging"
 MENU_SCALING = "Adjust scoring and scaling"
 MENU_AGGREGATORS = "Add or edit aggregators"
+MENU_TRACKING = "Job tracking columns"
+TOGGLE_TRACKING = f"Toggle {MENU_TRACKING.lower()}"
 MENU_SOURCES = "Manage job engines"
 MENU_ENGINES = "Download job engines"
 MENU_HELP = "Show help"
@@ -1767,7 +1784,7 @@ _MENU_TILES = [
     ("01", "LAUNCH SWEEP", "Run your job search now", MENU_RUN),
     ("04", "BUILD PROFILE", "Set up your job search", MENU_CREATE),
     ("02", "LOAD PROFILE", "Open a search you saved", MENU_LOAD),
-    ("05", "SWEEP SETTINGS", "Ranking, cards, history", MENU_SCALING),
+    ("05", "SWEEP SETTINGS", "Ranking, cards, tracking", MENU_SCALING),
     ("03", "SWEEPY'S TOOLBOX", "Edit profile, logs, help", MENU_TOOLBOX),
     ("06", "EXIT SWEEPY", "Save changes and close", MENU_EXIT),
 ]
@@ -1779,6 +1796,7 @@ _SCALING_CHOICES = [
     "Report style (report.style)",
     "Skip previously reported postings (history)",
     "History retention in days (history.retention_days)",
+    f"{MENU_TRACKING} in the CSV (export.tracking)",
 ]
 
 _AGGREGATOR_CHOICES = [
@@ -1885,6 +1903,7 @@ def _review_answers(
             [
                 submit_label,
                 "Edit an answer",
+                TOGGLE_TRACKING,
                 MENU_SOURCES,
                 "Adjust engine performance",
                 MENU_ENGINES,
@@ -1896,6 +1915,12 @@ def _review_answers(
         )
         if action == submit_label:
             return
+        if action == TOGGLE_TRACKING:
+            answers["job_tracking"] = not bool(answers.get("job_tracking", True))
+            log.info(
+                "%s: %s", MENU_TRACKING, "on" if answers["job_tracking"] else "off"
+            )
+            continue
         if action is None:
             if not steps:
                 return
@@ -2168,6 +2193,21 @@ def _edit_scaling(profile_data: Dict) -> bool:
                     return
                 log.warning("Enter a whole number 0 or higher.")
 
+        if action.startswith("Job tracking"):
+            export = dict(profile_data.get("export") or {})
+            enabled = _ask(
+                questionary.confirm(
+                    "Add job-tracking columns to the CSV? (values carry over to later sweeps)",
+                    default=tracking_enabled(export),
+                )
+            )
+            if enabled is not None:
+                export.setdefault("format", "pdf,csv")
+                export.setdefault("output_dir", "results")
+                export["tracking"] = bool(enabled)
+                profile_data["export"] = export
+                changed = True
+
     while True:
         history_cfg = profile_data.get("history") or {}
         history_state = (
@@ -2176,12 +2216,14 @@ def _edit_scaling(profile_data: Dict) -> bool:
             else f"on, {history_cfg.get('retention_days', 4)} days"
         )
         log.info(
-            "  Keyword weight %s | Max cards %s | Cards per page %s | Report style %s | History %s",
+            "  Keyword weight %s | Max cards %s | Cards per page %s | Report style %s | "
+            "History %s | Tracking %s",
             resume.get("keywords_weight", 1.5),
             report.get("max_cards", 24),
             report.get("cards_per_page", 6),
             report.get("style", "cards"),
             history_state,
+            "on" if tracking_enabled(profile_data.get("export") or {}) else "off",
         )
         action = _menu(
             "Which scaling setting do you want to change?", _SCALING_CHOICES

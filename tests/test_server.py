@@ -1,4 +1,5 @@
 import asyncio
+import csv
 import json
 import os
 import threading
@@ -60,6 +61,7 @@ def reset_session(monkeypatch):
     monkeypatch.setattr(server, "_session", server.SweepSession())
     monkeypatch.setattr(server, "_session_profile", {})
     monkeypatch.setattr(server, "_session_dir", None)
+    monkeypatch.setattr(server, "_session_playbook", "")
     monkeypatch.setattr(server, "_SWEEP_JOBS", {})
     monkeypatch.setattr(server, "_last_history", {"scope": None, "config": {}})
     monkeypatch.setattr(server, "enable_debug_logging", lambda: "test-debug.log")
@@ -496,6 +498,34 @@ def test_export_report_generates_png(monkeypatch, tmp_path):
     for png_path in data["generated"]["png"]:
         assert os.path.exists(png_path)
         assert png_path.endswith(".png")
+
+
+def test_export_report_carries_tracking_values(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    (profiles / "foo.yaml").write_text(
+        "name: Foo\nexport:\n  format: csv\n  tracking: true\n", encoding="utf-8"
+    )
+    src = tmp_path / "foo_2026-01-01-101010.json"
+    src.write_text(json.dumps([_job()]))
+
+    first = json.loads(server.export_report(json_source=str(src), formats=["csv"]))
+    csv_path = first["generated"]["csv"]
+    with open(csv_path, newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert "status" in rows[0]
+    rows[0]["status"] = "Applied"
+    with open(csv_path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    server.export_report(json_source=str(src), formats=["csv"])
+
+    with open(csv_path, newline="", encoding="utf-8") as handle:
+        carried = list(csv.DictReader(handle))
+    assert carried[0]["status"] == "Applied"
 
 
 def test_export_report_no_roles(tmp_path, monkeypatch):
@@ -962,3 +992,204 @@ def test_convert_document_reports_missing_file(tmp_path, monkeypatch):
 
     assert data["status"] == "error"
     assert "File not found" in data["message"]
+
+
+def test_create_profile_records_assessment_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    pdf = tmp_path / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+
+    out = server.create_profile(
+        name="Alice",
+        titles=["Writer"],
+        location="NYC",
+        resume_path=str(pdf),
+        assessment="keyword",
+    )
+    data = json.loads(out)
+
+    assert data["status"] == "ok"
+    with open(data["profile_path"], encoding="utf-8") as handle:
+        saved = yaml.safe_load(handle)
+    assert saved["report"]["assessment"] == "keyword"
+
+
+def test_create_profile_defaults_to_agent_assessment(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    pdf = tmp_path / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+
+    out = server.create_profile(name="Alice", titles=["Writer"], location="NYC", resume_path=str(pdf))
+    data = json.loads(out)
+
+    with open(data["profile_path"], encoding="utf-8") as handle:
+        saved = yaml.safe_load(handle)
+    assert saved["report"]["assessment"] == "agent"
+
+
+def test_create_profile_rejects_unknown_assessment(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    pdf = tmp_path / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+
+    out = server.create_profile(
+        name="Alice",
+        titles=["Writer"],
+        location="NYC",
+        resume_path=str(pdf),
+        assessment="sometimes",
+    )
+
+    assert json.loads(out)["status"] == "error"
+
+
+def test_assessment_mode_defaults_to_agent():
+    assert server._assessment_mode({}) == "agent"
+    assert server._assessment_mode({"report": {}}) == "agent"
+    assert server._assessment_mode({"report": {"assessment": "KEYWORD"}}) == "keyword"
+
+
+def test_assessment_mode_ignores_unknown_value(caplog):
+    with caplog.at_level("WARNING", logger="sweepy.server"):
+        assert server._assessment_mode({"report": {"assessment": "vibes"}}) == "agent"
+    assert "unknown report.assessment" in caplog.text
+
+
+def test_submit_judgments_accepts_batch(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    for suffix in ("a", "b"):
+        card = _card()
+        card["id"] = f"abc{suffix}"
+        card["url"] = f"https://example.com/{suffix}"
+        server._session.upsert(card)
+
+    out = server.submit_judgments(
+        judgments=[
+            {"job_id": "abca", "match_pct": 91, "domain": "Docs"},
+            {"job_id": "abcb", "match_value": 40, "alignment": "Tenure gap"},
+        ]
+    )
+    data = json.loads(out)
+
+    assert data["status"] == "ok"
+    assert data["applied"] == 2
+    assert data["rejected"] == []
+    assert {job["id"]: job["match_value"] for job in data["jobs"]} == {"abca": 91, "abcb": 40}
+    assert server._session.get("abca")["match_kind"] == "match"
+
+
+def test_submit_judgments_batch_reports_unknown_ids(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    server._session.upsert(_card())
+
+    data = json.loads(server.submit_judgments(judgments=[{"job_id": "nope", "match_pct": 50}]))
+
+    assert data["applied"] == 0
+    assert data["rejected"][0]["job_id"] == "nope"
+
+
+def test_submit_judgments_rejects_mixed_calls(reset_session):
+    data = json.loads(server.submit_judgments("abc123", match_pct=50, judgments=[]))
+    assert data["status"] == "error"
+
+
+def test_render_report_blocks_unassessed_cards_in_agent_mode(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    monkeypatch.setattr(server, "_session_profile", {"name": "Test", "report": {"assessment": "agent"}})
+    server._session.upsert(_card())
+
+    data = json.loads(server.render_report(output_filename=str(tmp_path / "report.pdf")))
+
+    assert data["status"] == "error"
+    assert data["unassessed_job_ids"] == ["abc123"]
+    assert "submit_judgments" in data["message"]
+    assert not (tmp_path / "report.pdf").exists()
+
+
+def test_render_report_allows_unassessed_cards_in_keyword_mode(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    monkeypatch.setattr(server, "_session_profile", {"name": "Test", "report": {"assessment": "keyword"}})
+    server._session.upsert(_card())
+
+    data = json.loads(server.render_report(output_filename=str(tmp_path / "report.pdf")))
+
+    assert data["status"] == "ok"
+    assert data["card_count"] == 1
+
+
+def test_require_judgments_env_blocks_keyword_mode(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    monkeypatch.setattr(server, "_session_profile", {"name": "Test", "report": {"assessment": "keyword"}})
+    monkeypatch.setenv("SWEEPY_REQUIRE_JUDGMENTS", "1")
+    server._session.upsert(_card())
+
+    data = json.loads(server.render_report(output_filename=str(tmp_path / "report.pdf")))
+
+    assert data["status"] == "error"
+    assert data["unassessed_count"] == 1
+
+
+def test_require_judgments_env_blocks_export(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("SWEEPY_REQUIRE_JUDGMENTS", "true")
+    src = tmp_path / "foo_2026-01-01.json"
+    src.write_text(json.dumps([_job()]))
+
+    data = json.loads(server.export_report(json_source=str(src), formats=["csv"]))
+
+    assert data["status"] == "error"
+    assert "export_report needs an agent assessment" in data["message"]
+
+
+def test_render_report_saves_playbook_with_the_session(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    monkeypatch.setattr(server, "_session_profile", {"name": "Test", "report": {"assessment": "agent"}})
+    server._session.upsert(_card())
+    server.submit_judgments("abc123", match_pct=95)
+
+    out = server.render_report(
+        output_filename=str(tmp_path / "report.pdf"), playbook="R&D first"
+    )
+    assert json.loads(out)["playbook_saved"] is True
+
+    with open(tmp_path / "report_session.json", encoding="utf-8") as handle:
+        saved = json.load(handle)
+    assert saved["playbook"] == "R&D first"
+
+
+def test_render_report_reuses_saved_playbook(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    monkeypatch.setattr(server, "_session_profile", {"name": "Test", "report": {"assessment": "agent"}})
+    server._session.upsert(_card())
+    server.submit_judgments("abc123", match_pct=95)
+    server.render_report(output_filename=str(tmp_path / "report.pdf"), playbook="Keep this line")
+
+    # A fresh process reloads the session from disk, where the playbook now lives.
+    server._session_playbook = ""
+    assert server._load_session(str(tmp_path)) is True
+    assert server._session_playbook == "Keep this line"
+
+    data = json.loads(server.render_report(output_filename=str(tmp_path / "again.pdf")))
+
+    assert data["status"] == "ok"
+    assert data["playbook_saved"] is True
+    import pymupdf
+
+    with pymupdf.open(data["pdf_report"]) as doc:
+        assert "Keep this line" in doc[-1].get_text()
+
+
+def test_new_sweep_result_clears_the_saved_playbook(monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_session_playbook", "stale strategy")
+    job = server._SweepJob(None, True, False, None)
+    job.result = {"cards": [_card()], "profile": {"name": "Test"}, "output_dir": None}
+
+    server._apply_sweep_result(job)
+
+    assert server._session_playbook == ""

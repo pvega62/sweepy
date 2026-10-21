@@ -23,4 +23,5 @@ report:
 export:
   format: pdf,csv
   output_dir: results
+  tracking: true
 debug: false

@@ -643,9 +643,10 @@ def _discover_sources_core(
 
     if builtin_cfg.get("enabled", True):
         categories = list(builtin_cfg.get("categories") or []) or load_builtin_categories()
+        detail_pages = bool(builtin_cfg.get("detail_pages", False))
         for category in categories:
             try:
-                jobs = fetch_builtin(category)
+                jobs = fetch_builtin(category, detail_pages=detail_pages)
             except Exception as e:
                 log.warning("Built In NYC source %r failed: %s", category, e)
                 continue

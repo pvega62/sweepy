@@ -44,6 +44,7 @@ platforms:
 export:
   format: pdf,csv,json
   output_dir: results
+  tracking: true
 sources:
   enabled:
   - jobspy
