@@ -77,11 +77,31 @@ def test_install_allows_a_conflict_when_overridden(monkeypatch):
 def test_split_install_keeps_conflicting_packages_out(monkeypatch):
     _jobspy_only(monkeypatch)
     blocked = engines.ENGINE_CATALOG["jobdrop"].conflict_packages
+    monkeypatch.setattr(
+        engines.importlib.metadata,
+        "requires",
+        lambda name: [
+            "beautifulsoup4 (>=4.12.2,<5.0.0)",
+            "curl-cffi (>=0.7.0,<0.8.0)",
+            "pandas (>=2.1.0,<3.0.0)",
+            'fastmcp (>=0.2.0) ; extra == "mcp"',
+        ],
+    )
 
     dependencies = engines._dependencies_without("jobdrop", blocked)
 
     assert dependencies
     assert not any("curl" in requirement.lower() for requirement in dependencies)
+    assert not any("extra ==" in requirement for requirement in dependencies)
+
+
+def test_split_install_tolerates_absent_metadata(monkeypatch):
+    def missing(name):
+        raise engines.importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(engines.importlib.metadata, "requires", missing)
+
+    assert engines._dependencies_without("jobdrop", ("curl-cffi",)) == []
 
 
 def test_missing_engines_hide_the_conflicting_engine(monkeypatch):
