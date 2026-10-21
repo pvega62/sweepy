@@ -383,7 +383,7 @@ def extract_resume_keywords(resume_path: str, must_have_skills: List[str]) -> Li
 def _resume_signals(resume_path: str, must_have_skills: List[str]) -> Tuple[List[str], str]:
     """Return the résumé's keywords and its lower-cased text from one file read.
 
-    The text drives posting-side coverage, so callers that need both get them
+    The text drives requirement overlap, so callers that need both get them
     from a single parse of the résumé.
     """
     keywords: Dict[str, str] = {}
@@ -571,9 +571,9 @@ def normalize_synonyms(raw) -> Dict[str, Tuple[str, ...]]:
 
     Accepts either a mapping (``{"docs-as-code": ["documentation as code"]}``) or
     a list of groups (``[["docs-as-code", "documentation as code"]]``). Every
-    member of a group maps to the rest of the group, so matching works in both
-    directions: a posting keyword and a résumé phrase meet in the middle even
-    when only one of them appears in the group.
+    member of a group maps to the rest of the group, so a posting keyword and a
+    résumé phrase meet in the middle even when only one of them appears in the
+    group.
     """
     groups: List[List[str]] = []
     if isinstance(raw, dict):
@@ -686,10 +686,10 @@ def _score_job_against_keywords(
 ) -> None:
     """Set match_score, coverage, badge, key_matches, and playbook on a job dict.
 
-    The score blends two directions: how much of the résumé's vocabulary the
-    posting repeats (``resume_cover``) and how much of the posting's requirements
-    the résumé already shows (``job_cover``). The posting side carries the larger
-    weight, because the ad defines what the match means.
+    The score blends two overlap measures: how much of the résumé's vocabulary
+    the posting repeats (``resume_cover``) and how much of the posting's
+    requirements the résumé already shows (``job_cover``). Requirement overlap
+    carries the larger weight, because the ad defines what the match means.
     """
     haystack = f"{job.get('title', '')} {job.get('description', '')}".lower()
     matched = []
@@ -711,8 +711,8 @@ def _score_job_against_keywords(
         preferred_keywords=preferred_keywords,
         synonyms=synonyms,
     )
-    # The posting side needs both an extractable posting and a readable résumé.
-    # Without one of them, the blend degrades to the résumé-side overlap.
+    # Requirement overlap needs both an extractable posting and a readable résumé.
+    # Without one of them, the blend degrades to keyword overlap.
     job_side = bool(job_keywords) and bool(resume_text)
 
     if resume_cover is None and not job_side:

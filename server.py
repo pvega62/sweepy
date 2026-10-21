@@ -64,6 +64,7 @@ with contextlib.redirect_stdout(sys.stderr):
     from engine.report import build_report
     from engine.session import SweepSession, stable_id
     from engine.sweep_config import default_engine_config, normalize_sources, validate_sources
+    from engine.tracking import load_previous, tracking_enabled
     from swee import run_sweep_pipeline
 
 mcp = FastMCP("sweepy")
@@ -79,6 +80,8 @@ _EXPECTED = (FileNotFoundError, ValueError, IsADirectoryError, PermissionError)
 _session = SweepSession()
 _session_profile: dict = {}
 _session_dir: Optional[str] = None
+# The agent's strategy text, kept with the session so a re-render does not drop it.
+_session_playbook: str = ""
 # Remembers the history bucket of the last sweep so clear_history() needs no arguments.
 _last_history: dict = {"scope": None, "config": {}}
 
@@ -146,6 +149,30 @@ def _default_profile_path(profile_data: dict) -> str:
     safe_name = re.sub(r'[^a-zA-Z0-9]+', '_', name).strip('_').lower()
     safe_title = re.sub(r'[^a-zA-Z0-9]+', '_', first_title).strip('_').lower()
     return os.path.join("profiles", f"{safe_name}_{safe_title}.yaml")
+
+
+_RESULT_STAMP = re.compile(r"_\d{4}-\d{2}-\d{2}-\d{6}$")
+
+
+def _profile_stem_from_result(stem: str) -> str:
+    """Drop the ``_YYYY-MM-DD-HHMMSS`` stamp from a result file stem."""
+    return _RESULT_STAMP.sub("", stem)
+
+
+def _profile_tracking_setting(profile_stem: Optional[str]) -> bool:
+    """Read ``export.tracking`` from the profile behind a sweep. Off when unresolvable."""
+    if not profile_stem:
+        return False
+    for suffix in (".yaml", ".yml"):
+        path = os.path.join(_WORKSPACE, "profiles", f"{profile_stem}{suffix}")
+        if os.path.exists(path):
+            try:
+                with _quiet_stdout():
+                    profile = load_config(path)
+            except (OSError, ValueError):
+                return False
+            return tracking_enabled(profile.get("export") or {})
+    return False
 
 
 def _validate_runtime_config(
@@ -252,7 +279,11 @@ def _persist_session(results_dir: Optional[str]) -> None:
         return
     path = _session_path(results_dir)
     try:
-        payload = {"profile": _session_profile, "jobs": _session.all()}
+        payload = {
+            "profile": _session_profile,
+            "jobs": _session.all(),
+            "playbook": _session_playbook,
+        }
         os.makedirs(results_dir, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False, default=str)
@@ -262,7 +293,7 @@ def _persist_session(results_dir: Optional[str]) -> None:
 
 def _load_session(results_dir: str) -> bool:
     """Load a persisted session into the in-memory store. Returns False if absent."""
-    global _session, _session_profile
+    global _session, _session_profile, _session_playbook
     path = _session_path(results_dir)
     if not os.path.exists(path):
         return False
@@ -272,6 +303,7 @@ def _load_session(results_dir: str) -> bool:
         _session = SweepSession()
         _session.set_many(payload.get("jobs", []) or [])
         _session_profile = payload.get("profile", {}) or {}
+        _session_playbook = str(payload.get("playbook") or "")
         return True
     except (OSError, ValueError):
         log.warning("Could not load session from %s", path)
@@ -292,6 +324,54 @@ def _sorted_cards() -> List[dict]:
     cards = _session.all()
     cards.sort(key=lambda c: (c.get("rank", 0) if c.get("rank") else float("inf")))
     return cards
+
+
+_ASSESSMENT_MODES = ("agent", "keyword")
+
+
+def _assessment_mode(profile: Optional[dict]) -> str:
+    """Return the profile's reporting mode: ``agent`` (default) or ``keyword``."""
+    report = (profile or {}).get("report") or {}
+    raw = report.get("assessment")
+    if raw is None or str(raw).strip() == "":
+        return "agent"
+    mode = str(raw).strip().lower()
+    if mode not in _ASSESSMENT_MODES:
+        log.warning("Ignoring unknown report.assessment %r; using 'agent'", raw)
+        return "agent"
+    return mode
+
+
+def _judgments_required() -> bool:
+    """True when SWEEPY_REQUIRE_JUDGMENTS asks the server to refuse unassessed reports."""
+    return os.environ.get("SWEEPY_REQUIRE_JUDGMENTS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _unassessed(cards: List[dict]) -> List[dict]:
+    return [card for card in cards if card.get("match_kind") != "match"]
+
+
+def _assessment_error(cards: List[dict], tool_name: str) -> Optional[str]:
+    """Return an error payload when unassessed cards block a report."""
+    pending = _unassessed(cards)
+    if not pending:
+        return None
+    return _err(
+        f"{tool_name} needs an agent assessment first. {len(pending)} of {len(cards)} cards "
+        "still carry keyword overlap, not a match score. Call get_jobs, assess each role "
+        "against the resume, then submit_judgments before rendering. Set "
+        "report.assessment: keyword in the profile to keep keyword-only reports.",
+        unassessed_count=len(pending),
+        unassessed_job_ids=[card.get("id") for card in pending],
+        unassessed_titles=[
+            f"{card.get('company') or card.get('title')}: {card.get('title')}" for card in pending
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -360,12 +440,14 @@ def _prune_sweep_jobs() -> None:
 
 def _apply_sweep_result(job: "_SweepJob") -> None:
     """Adopt a finished job's cards as the live session so later tools see them."""
-    global _session, _session_profile, _session_dir, _last_history
+    global _session, _session_profile, _session_dir, _last_history, _session_playbook
     results = job.result or {}
     _session = SweepSession()
     _session.set_many(results.get("cards", []) or [])
     _session_profile = results.get("profile", {}) or {}
     _session_dir = results.get("output_dir")
+    # A new sweep replaces every card, so the previous strategy text no longer applies.
+    _session_playbook = ""
     scope = results.get("history_scope")
     if scope:
         _last_history = {
@@ -506,6 +588,8 @@ def _sweep_payload(job: "_SweepJob") -> str:
             f"No new postings since the last sweep ({previously_seen} already reported). "
             "Call run_sweep with include_seen=true to review them."
         )
+    cards = _sorted_cards()
+    mode = _assessment_mode(_session_profile)
     return _ok(
         sweep_status="completed",
         job_id=job.id,
@@ -517,8 +601,11 @@ def _sweep_payload(job: "_SweepJob") -> str:
         reports=results.get("reports"),
         debug_log=job.debug_log,
         top_roles=results.get("top_roles", [])[:5],
-        job_ids=[c["id"] for c in _sorted_cards()],
+        job_ids=[c["id"] for c in cards],
         card_count=len(results.get("cards", []) or []),
+        assessed_count=len(cards) - len(_unassessed(cards)),
+        assessment_mode=mode,
+        assessment_required=mode == "agent" or _judgments_required(),
         skipped_sources=results.get("skipped_sources", []),
         elapsed_seconds=job.elapsed_seconds,
         message=message,
@@ -558,6 +645,8 @@ def create_profile(
     cache_config: Optional[dict] = None,
     orchestrator_config: Optional[dict] = None,
     history_config: Optional[dict] = None,
+    job_tracking: bool = True,
+    assessment: str = "agent",
     output_filename: Optional[str] = None
 ) -> str:
     """
@@ -586,6 +675,13 @@ def create_profile(
             (default 4), ``match`` (``url`` or ``url+role``), and ``path`` (default
             ``~/.sweepy/history.db``). Controls whether a sweep skips postings the user
             already received.
+        job_tracking: True (default) appends job-tracking columns to the CSV export
+            (``date_applied``, ``status``, ``interview_stage``, ``offer_amount``,
+            ``offer_date``, ``follow_up_date``, ``contact``, ``notes``) and carries
+            earlier values forward into later sweeps.
+        assessment: ``agent`` (default) makes render_report refuse keyword-only cards
+            until the agent submits judgments. ``keyword`` keeps keyword-overlap
+            reports available for callers that want them.
         output_filename: Optional custom YAML path (defaults to profiles/{name}_{title}.yaml).
 
     Returns:
@@ -598,6 +694,12 @@ def create_profile(
             raise ValueError("titles must be a non-empty list")
 
         _validate_runtime_config(cache_config, orchestrator_config, history_config)
+
+        assessment_value = str(assessment or "").strip().lower()
+        if assessment_value not in _ASSESSMENT_MODES:
+            raise ValueError(
+                "assessment must be 'agent' or 'keyword': " + repr(assessment)
+            )
 
         resolved_resume = _resolve_read_path(resume_path, must_exist=True)
         if not resolved_resume.lower().endswith((".pdf", ".docx")):
@@ -630,9 +732,11 @@ def create_profile(
                 "keywords_weight": 1.5,
             },
             "platforms": platforms_config,
+            "report": {"assessment": assessment_value},
             "export": {
                 "format": "pdf,csv,json",
                 "output_dir": "results",
+                "tracking": bool(job_tracking),
             },
         }
         if synonyms:
@@ -931,6 +1035,7 @@ def export_report(
     formats: Optional[List[str]] = None,
     candidate_name: str = "Job Seeker",
     output_dir: Optional[str] = None,
+    job_tracking: Optional[bool] = None,
 ) -> str:
     """
     Rebuilds report files (PDF, PNG, CSV, or JSON) from an existing sweep result without re-running discovery or scoring.
@@ -942,6 +1047,8 @@ def export_report(
         formats: List of output formats to generate. Options: 'pdf', 'csv', 'json', 'png'. Defaults to ['pdf'].
         candidate_name: Name displayed in the PDF report header (default 'Job Seeker').
         output_dir: Directory to save regenerated reports. Defaults to same directory as the source JSON.
+        job_tracking: Add the job-tracking columns to a CSV export and carry earlier values
+            forward. Leave unset to follow the profile's ``export.tracking`` setting.
 
     Returns:
         JSON string with the status and absolute paths to all generated report files.
@@ -966,6 +1073,11 @@ def export_report(
         if not roles:
             return _err("Source JSON contains no roles to export.")
 
+        if _judgments_required():
+            blocked = _assessment_error(roles, "export_report")
+            if blocked:
+                return blocked
+
         base_name = os.path.splitext(source_json)[0]
         if output_dir is not None:
             target_dir = _safe_output_path(output_dir)
@@ -974,6 +1086,13 @@ def export_report(
         os.makedirs(target_dir, exist_ok=True)
         stem = os.path.basename(base_name)
         base_out = os.path.join(target_dir, stem)
+
+        tracking_stem = profile_stem or _profile_stem_from_result(stem)
+        tracking = (
+            job_tracking
+            if job_tracking is not None
+            else _profile_tracking_setting(tracking_stem)
+        )
 
         generated = {}
         errors = []
@@ -1005,8 +1124,17 @@ def export_report(
         if "csv" in formats:
             try:
                 csv_path = f"{base_out}.csv"
+                # Do not exclude ``csv_path``: a re-export overwrites the same file, so
+                # its current contents are the newest tracking edits to keep.
+                previous = (
+                    load_previous(os.path.dirname(source_json), tracking_stem)
+                    if tracking
+                    else None
+                )
                 with _quiet_stdout():
-                    num_rows, num_cols = export_to_csv(roles, csv_path)
+                    num_rows, num_cols = export_to_csv(
+                        roles, csv_path, tracking=tracking, previous=previous
+                    )
                 generated["csv"] = os.path.realpath(csv_path)
                 generated["csv_rows"] = num_rows
             except Exception as e:
@@ -1179,7 +1307,7 @@ def get_jobs(
     openWorldHint=False,
 ))
 def submit_judgments(
-    job_id: str,
+    job_id: Optional[str] = None,
     match_pct: Optional[int] = None,
     resume_track: Optional[str] = None,
     resume_color: Optional[str] = None,
@@ -1192,6 +1320,7 @@ def submit_judgments(
     comp: Optional[str] = None,
     benefits: Optional[str] = None,
     page_theme: Optional[str] = None,
+    judgments: Optional[List[dict]] = None,
 ) -> str:
     """
     Overrides a job's deterministic card fields with LLM-supplied judgments.
@@ -1202,16 +1331,29 @@ def submit_judgments(
     copy the deterministic overlap score into match_pct or invent unsupported details.
     In the standard job-search workflow, submit judgments for all roles you assessed.
 
+    Pass ``judgments`` to assess many roles in one call. Each entry needs a ``job_id``
+    plus any of the single-card fields, which keeps a 24-role assessment to one request.
+
     Args:
         job_id: Stable job id (from run_sweep or get_jobs).
         match_pct: Optional LLM match percentage (0-100).
         resume_track, resume_color, domain, summary, requirements, alignment,
         has_extended_response, app_format, comp, benefits, page_theme: Optional overrides.
+        judgments: Optional list of judgment objects, each with a ``job_id`` key. Do not
+            combine with the single-card fields.
 
     Returns:
-        JSON string with the merged card record.
+        JSON string with the merged card, or with ``applied`` and ``jobs`` for a batch.
     """
     try:
+        if judgments is not None:
+            if job_id is not None:
+                return _err("Pass either job_id or judgments, not both.")
+            return _submit_judgment_batch(judgments)
+
+        if not job_id:
+            return _err("Provide job_id or a judgments list.")
+
         fields: dict = {}
         if match_pct is not None:
             fields["match_value"] = int(match_pct)
@@ -1248,6 +1390,32 @@ def submit_judgments(
     except Exception as exc:
         log.exception("submit_judgments failed")
         return _err(str(exc))
+
+
+def _submit_judgment_batch(judgments: List[dict]) -> str:
+    """Apply a list of judgments, reporting any entry that cannot be stored."""
+    applied = []
+    rejected = []
+    for entry in judgments:
+        if not isinstance(entry, dict):
+            rejected.append({"job_id": None, "reason": "entry is not an object"})
+            continue
+        target = entry.get("job_id") or entry.get("id")
+        if not target:
+            rejected.append({"job_id": None, "reason": "missing job_id"})
+            continue
+        fields = {k: v for k, v in entry.items() if k not in ("job_id", "id") and v is not None}
+        if "match_pct" in fields:
+            fields["match_value"] = int(fields.pop("match_pct"))
+            fields["match_kind"] = "match"
+        try:
+            applied.append(_session.apply_judgments(target, **fields))
+        except KeyError:
+            rejected.append({"job_id": target, "reason": "no job with that id in the session"})
+
+    if applied:
+        _persist_session(_session_dir)
+    return _ok(applied=len(applied), jobs=applied, rejected=rejected)
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -1333,18 +1501,31 @@ def render_report(
         profile_stem: Optional profile identifier to load a persisted session from disk.
         results_dir: Results directory (default 'results').
         output_filename: Optional explicit output PDF path (must stay inside the workspace).
-        playbook: Optional playbook text; when empty, a deterministic playbook is generated.
+        playbook: Optional plain-text strategy note. Ampersands, angle brackets, and
+            newlines are handled as text, and ``**bold**`` adds emphasis. The text is
+            saved with the session, so a later render keeps it. When empty, Sweepy
+            reuses the saved playbook, then falls back to a generated one.
 
     Returns:
-        JSON string with the output path and page count.
+        JSON string with the output path, page count, and the playbook it used.
     """
+    global _session_playbook
     try:
         _resolve_session(results_dir, profile_stem)
         cards = _sorted_cards()
         if not cards:
             return _err("No jobs in the session to render.")
 
+        if _assessment_mode(_session_profile) == "agent" or _judgments_required():
+            blocked = _assessment_error(cards, "render_report")
+            if blocked:
+                return blocked
+
         profile = _session_profile or {"name": "Job Seeker"}
+        if playbook.strip():
+            _session_playbook = playbook
+        elif _session_playbook:
+            playbook = _session_playbook
 
         if output_filename:
             pdf_path = _safe_output_path(output_filename)
@@ -1359,7 +1540,13 @@ def render_report(
         with _quiet_stdout():
             pages = build_report(cards, pdf_path, profile, playbook=playbook)
 
-        return _ok(pdf_report=os.path.realpath(pdf_path), pages=pages, card_count=len(cards))
+        _persist_session(_session_dir)
+        return _ok(
+            pdf_report=os.path.realpath(pdf_path),
+            pages=pages,
+            card_count=len(cards),
+            playbook_saved=bool(_session_playbook),
+        )
     except _EXPECTED as exc:
         log.warning("%s: %s", type(exc).__name__, exc)
         return _err(str(exc))

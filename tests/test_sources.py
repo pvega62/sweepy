@@ -8,7 +8,7 @@ import engine.sources as sources
 import engine.sources.ashby as ashby
 from engine.sources.ashby import fetch_ashby_org
 from engine.sources.ashby import normalize as normalize_ashby
-from engine.sources.builtinnyc import parse_jobs
+from engine.sources.builtinnyc import apply_detail, parse_detail, parse_jobs
 from engine.sources.greenhouse import normalize as normalize_greenhouse
 from engine.sources.lever import normalize as normalize_lever
 from engine.sources.workable import normalize as normalize_workable
@@ -130,6 +130,137 @@ def test_builtin_parse_relative_job_link():
     jobs = parse_jobs(html, "https://www.builtinnyc.com")
     assert jobs[0]["url"] == "https://www.builtinnyc.com/job/technical-writer"
     assert jobs[0]["platform"] == "Built In NYC"
+
+
+_BUILTIN_CARD_HTML = """
+<div class="job-bounded-responsive bg-white p-md">
+  <div class="row">
+    <div class="col-12 col-lg-7 left-side-tile">
+      <a href="/company/sofi"><img alt="SoFi Logo"></a>
+      <a data-id="company-title" href="/company/sofi"><span>SoFi</span></a>
+      <h2><a data-id="job-card-title" href="/job/paralegal-service-process/11689049">Paralegal</a></h2>
+    </div>
+    <div class="col-12 col-lg-5 bounded-attribute-section">
+      <div class="d-flex align-items-start gap-sm">
+        <div><i class="fa-regular fa-house-building"></i></div>
+        <span class="font-barlow text-gray-04">Remote or Hybrid</span>
+      </div>
+      <div class="d-flex align-items-start gap-sm">
+        <div><i class="fa-regular fa-location-dot"></i></div>
+        <div><span class="font-barlow text-gray-04">New York, NY</span></div>
+      </div>
+      <div class="d-flex align-items-start gap-sm">
+        <div><i class="fa-regular fa-sack-dollar"></i></div>
+        <span class="font-barlow text-gray-04">99K-186K Annually</span>
+      </div>
+    </div>
+  </div>
+</div>
+"""
+
+_BUILTIN_DETAIL_HTML = """
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+  {"@type":"BreadcrumbList","itemListElement":[]},
+  {"@type":"JobPosting","title":"Paralegal","description":"<p>Write filings.</p><ul><li>Westlaw</li></ul>",
+   "datePosted":"2026-10-19","employmentType":"FULL_TIME","jobLocationType":"TELECOMMUTE",
+   "hiringOrganization":{"@type":"Organization","name":"SoFi"},
+   "jobLocation":{"@type":"Place","address":{"addressLocality":"New York","addressRegion":"NY"}},
+   "baseSalary":{"@type":"MonetaryAmount","currency":"USD",
+     "value":{"@type":"QuantitativeValue","minValue":99000,"maxValue":186000,"unitText":"YEAR"}}}
+]}
+</script>
+"""
+
+
+def test_builtin_parse_reads_company_location_and_salary():
+    job = parse_jobs(_BUILTIN_CARD_HTML)[0]
+    assert job["company"] == "SoFi"
+    assert job["location"] == "New York, NY"
+    assert job["workplace_type"] == "Remote or Hybrid"
+    assert job["remote"] is True
+    assert job["min_amount"] == 99000
+    assert job["max_amount"] == 186000
+    assert job["salary_period"] == "year"
+
+
+def test_builtin_detail_reads_job_posting_json_ld():
+    posting = parse_detail(_BUILTIN_DETAIL_HTML)
+    assert posting["title"] == "Paralegal"
+
+
+def test_builtin_apply_detail_fills_a_listing_job():
+    job = parse_jobs(_BUILTIN_CARD_HTML)[0]
+    enriched = apply_detail(job, _BUILTIN_DETAIL_HTML)
+    assert "Write filings." in enriched["description"]
+    assert "Westlaw" in enriched["description"]
+    assert "<p>" not in enriched["description"]
+    assert enriched["company"] == "SoFi"
+    assert enriched["location"] == "New York, NY"
+    assert enriched["min_amount"] == 99000
+    assert enriched["max_amount"] == 186000
+    assert enriched["job_type"] == "FULL_TIME"
+    assert enriched["date_posted"] == "2026-10-19"
+
+
+def test_builtin_apply_detail_keeps_listing_values():
+    job = parse_jobs(_BUILTIN_CARD_HTML)[0]
+    job["company"] = "Listing Co"
+    job["location"] = "Jersey City, NJ"
+    job["min_amount"] = 50000
+    enriched = apply_detail(job, _BUILTIN_DETAIL_HTML)
+    assert enriched["company"] == "Listing Co"
+    assert enriched["location"] == "Jersey City, NJ"
+    assert enriched["min_amount"] == 50000
+    assert "Write filings." in enriched["description"]
+
+
+def test_builtin_relative_links_resolve_to_the_site_root():
+    html = '<div><a href="/job/technical-writer/123">Technical Writer</a></div>'
+    jobs = parse_jobs(html, "https://www.builtinnyc.com/jobs/legal/search/paralegal")
+    assert jobs[0]["url"] == "https://www.builtinnyc.com/job/technical-writer/123"
+
+
+def test_builtin_apply_detail_handles_a_location_list():
+    html = (
+        '<script type="application/ld+json">{"@type":"JobPosting","jobLocation":'
+        '[{"@type":"Place","address":{"addressLocality":"Newark","addressRegion":"NJ"}}]}</script>'
+    )
+    assert apply_detail({}, html)["location"] == "Newark, NJ"
+
+
+def test_builtin_fetch_stops_detail_requests_after_a_block(monkeypatch):
+    import engine.sources.builtinnyc as builtin
+
+    listing = "".join(
+        f'<a href="https://www.builtinnyc.com/job/paralegal-{n}/10{n}">Paralegal {n}</a>'
+        for n in range(1, 4)
+    )
+    detail_calls = []
+
+    class _Response:
+        def __init__(self, status, text):
+            self.status_code = status
+            self.text = text
+            self.headers = {}
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, headers=None, timeout=None):
+        if url.endswith("/jobs/legal"):
+            return _Response(200, listing)
+        detail_calls.append(url)
+        return _Response(429, "Just a moment...")
+
+    monkeypatch.setattr(builtin, "_DETAIL_DELAY", 0)
+    monkeypatch.setattr(builtin.requests, "get", fake_get)
+
+    jobs = builtin.fetch_builtin("jobs/legal", detail_pages=True)
+
+    assert len(jobs) == 3
+    assert len(detail_calls) <= 2
+    assert jobs[0]["company"] == ""
 
 
 def test_discover_sources_merges_and_dedupes(monkeypatch):
@@ -399,7 +530,11 @@ def test_builtin_source_ignores_platforms_key(monkeypatch):
     monkeypatch.setattr(discovery, "_REQUEST_DELAY", 0)
     _patch_seed_loaders(monkeypatch, load_builtin_categories=["jobs/legal"])
     calls = []
-    monkeypatch.setattr(discovery, "fetch_builtin", lambda category: calls.append(category) or [])
+    monkeypatch.setattr(
+        discovery,
+        "fetch_builtin",
+        lambda category, **kwargs: calls.append(category) or [],
+    )
     discovery.discover_sources({}, titles=["writer"], platforms={"builtinnyc": False})
     assert calls == ["jobs/legal"]
 

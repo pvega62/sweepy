@@ -141,7 +141,7 @@ def _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes, selects=None
 
 def test_wizard_writes_remote_only_and_parses_salary(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer, Editor", "NYC", "resume.pdf", "65,000", ""])
-    confirms = iter([True, True, False, False, False])
+    confirms = iter([True, True, False, True, False, False])
     checkboxes = iter([["ats:greenhouse", "ats:ashby"], ["pdf", "csv"]])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes)
     monkeypatch.chdir(tmp_path)
@@ -157,7 +157,7 @@ def test_wizard_writes_remote_only_and_parses_salary(monkeypatch, tmp_path):
 
 def test_wizard_saves_the_boards_picked_from_the_catalog(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer, Editor", "NYC", "resume.pdf", "", ""])
-    confirms = iter([True, True, False, False, False])
+    confirms = iter([True, True, False, True, False, False])
     checkboxes = iter(
         [["jobspy:indeed", "jobspy:glassdoor", "ats:lever"], ["pdf", "csv"]]
     )
@@ -177,7 +177,7 @@ def test_wizard_saves_the_boards_picked_from_the_catalog(monkeypatch, tmp_path):
 
 def test_wizard_reparses_invalid_salary(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "abc", "65k", ""])
-    confirms = iter([False, True, False, False, False])
+    confirms = iter([False, True, False, True, False, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes)
     monkeypatch.chdir(tmp_path)
@@ -190,7 +190,7 @@ def test_wizard_reparses_invalid_salary(monkeypatch, tmp_path):
 
 def test_wizard_enables_debug_logging(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
-    confirms = iter([False, True, False, False, True])
+    confirms = iter([False, True, False, True, False, True])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes)
     monkeypatch.chdir(tmp_path)
@@ -203,7 +203,7 @@ def test_wizard_enables_debug_logging(monkeypatch, tmp_path):
 
 def test_wizard_can_edit_an_answer_before_submitting(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", "", "Editor"])
-    confirms = iter([False, True, False, False, False])
+    confirms = iter([False, True, False, True, False, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(
         ["Create a new profile", "Edit an answer", "Job titles", "Submit profile", "Exit"]
@@ -219,7 +219,7 @@ def test_wizard_can_edit_an_answer_before_submitting(monkeypatch, tmp_path):
 
 def test_wizard_validates_track_color(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", "", "Tech Writer", "badcolor", "navy", "track.pdf", "api", ""])
-    confirms = iter([False, True, False, True, False])
+    confirms = iter([False, True, False, True, True, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes)
     monkeypatch.chdir(tmp_path)
@@ -233,7 +233,7 @@ def test_wizard_validates_track_color(monkeypatch, tmp_path):
 
 def test_wizard_show_recent_logs_choice(monkeypatch, tmp_path, capsys):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
-    confirms = iter([False, True, False, False, False])
+    confirms = iter([False, True, False, True, False, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(["Create a new profile", "Show recent logs", "Submit profile", "Exit"])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes, selects)
@@ -251,7 +251,7 @@ def test_wizard_show_recent_logs_choice(monkeypatch, tmp_path, capsys):
 
 def test_wizard_show_recent_logs_empty(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
-    confirms = iter([False, True, False, False, False])
+    confirms = iter([False, True, False, True, False, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(["Create a new profile", "Show recent logs", "Submit profile", "Exit"])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes, selects)
@@ -266,7 +266,7 @@ def test_wizard_show_recent_logs_empty(monkeypatch, tmp_path):
 
 def test_wizard_converts_docx_resume_to_pdf(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.docx", "", "65,000", ""])
-    confirms = iter([True, True, True, False, False, False])
+    confirms = iter([True, True, True, False, True, False, False])
     checkboxes = iter([["ats:greenhouse", "ats:ashby"], ["pdf", "csv"]])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes)
     monkeypatch.setattr(cfg, "convert_to_pdf", lambda source, out=None: "out.pdf")
@@ -715,7 +715,7 @@ def _rich_profile():
             "max_cards": 5,
             "destinations": ["D:/reports"],
         },
-        "export": {"format": "pdf,json", "output_dir": "out"},
+        "export": {"format": "pdf,json", "output_dir": "out", "tracking": True},
     }
 
 
@@ -744,9 +744,25 @@ def test_merge_answers_drops_tracks_and_custom_when_cleared():
     assert merged["resume"]["synonyms"] == profile["resume"]["synonyms"]
 
 
+def test_wizard_review_toggles_job_tracking(monkeypatch, tmp_path):
+    texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
+    confirms = iter([False, True, False, True, False, False])
+    checkboxes = iter([["ats:greenhouse"], ["pdf", "csv"]])
+    selects = iter(
+        ["Create a new profile", cfg.TOGGLE_TRACKING, "Submit profile", "Exit"]
+    )
+    _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes, selects)
+    monkeypatch.chdir(tmp_path)
+
+    path = cfg.run_wizard()
+    data = load_config(path)
+
+    assert data["export"]["tracking"] is False
+
+
 def test_wizard_toggles_debug_and_saves_on_exit(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
-    confirms = iter([False, True, False, False, False, True])
+    confirms = iter([False, True, False, True, False, False, True])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(
         [
@@ -783,7 +799,7 @@ def test_wizard_scaling_editor_validates_and_saves(monkeypatch, tmp_path):
             "3",
         ]
     )
-    confirms = iter([False, True, False, False, False, True])
+    confirms = iter([False, True, False, True, False, False, True])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(
         [
@@ -833,6 +849,20 @@ def test_scaling_editor_toggles_history_and_retention(monkeypatch):
     assert profile["history"] == {"enabled": False, "retention_days": 14}
 
 
+def test_scaling_editor_toggles_job_tracking(monkeypatch):
+    menus = iter([f"{cfg.MENU_TRACKING} in the CSV (export.tracking)", None])
+    monkeypatch.setattr(cfg, "_menu", lambda *a, **k: next(menus))
+    monkeypatch.setattr(cfg, "_ask", lambda question: False)
+    monkeypatch.setattr(cfg.questionary, "confirm", lambda *a, **k: object())
+    monkeypatch.setattr(cfg.questionary, "text", lambda *a, **k: object())
+
+    profile = {"resume": {}, "report": {}, "export": {"format": "pdf,csv", "tracking": True}}
+    changed = cfg._edit_scaling(profile)
+
+    assert changed is True
+    assert profile["export"]["tracking"] is False
+
+
 def test_wizard_aggregator_editor_adds_custom_aggregator(monkeypatch, tmp_path):
     texts = iter(
         [
@@ -846,7 +876,7 @@ def test_wizard_aggregator_editor_adds_custom_aggregator(monkeypatch, tmp_path):
             "SmartRecruiters.com",
         ]
     )
-    confirms = iter([False, True, False, False, False, True])
+    confirms = iter([False, True, False, True, False, False, True])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(
         [
@@ -950,6 +980,37 @@ def test_wizard_edits_existing_profile_in_place(monkeypatch, tmp_path):
     assert data["search"]["titles"] == ["Editor"]
     assert data["resume"]["synonyms"] == [["docs-as-code", "documentation as code"]]
     assert data["sources"] == {"jobspy": {"linkedin": False}}
+
+
+def test_wizard_toggles_job_tracking_on_existing_profile(monkeypatch, tmp_path):
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    (profiles / "legacy.yaml").write_text(
+        "name: Alex\n"
+        "search:\n"
+        "  titles:\n"
+        "    - Paralegal\n"
+        "export:\n"
+        "  format: pdf,csv\n"
+        "  tracking: true\n",
+        encoding="utf-8",
+    )
+    selects = iter(
+        [
+            "Edit an existing profile",
+            "profiles/legacy.yaml",
+            cfg.TOGGLE_TRACKING,
+            "Submit changes",
+            "Overwrite profiles/legacy.yaml",
+            "Exit",
+        ]
+    )
+    _install_wizard_stubs(monkeypatch, iter([]), iter([]), iter([]), selects)
+    monkeypatch.chdir(tmp_path)
+
+    path = cfg.run_wizard()
+
+    assert load_config(path)["export"]["tracking"] is False
 
 
 def test_wizard_edits_existing_profile_as_new_file(monkeypatch, tmp_path):

@@ -39,6 +39,7 @@ from engine.pdf_builder import build_pdf
 from engine.report import build_report
 from engine.scorer import normalize_synonyms, score_jobs, score_jobs_by_track
 from engine.sweep_config import normalize_sources, validate_sources
+from engine.tracking import carried_count, load_previous, tracking_enabled
 from engine.updater import check_for_updates, update_sweepy
 from engine.validator import filter_valid_jobs
 
@@ -168,6 +169,14 @@ def _setup_headless(args) -> None:
             history["enabled"] = False
         profile["history"] = history
 
+    job_tracking = getattr(args, "job_tracking", None)
+    if job_tracking is not None:
+        export = dict(profile.get("export") or {})
+        export.setdefault("format", "pdf,csv")
+        export.setdefault("output_dir", "results")
+        export["tracking"] = job_tracking
+        profile["export"] = export
+
     runtime = normalize_sources(profile)
     errors = validate_sources(
         {engine: runtime["engines"][engine] for engine in runtime["enabled"]},
@@ -258,6 +267,12 @@ def main() -> None:
         "--no-history",
         action="store_true",
         help="Report every posting on every run (headless setup)",
+    )
+    parser.add_argument(
+        "--job-tracking",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Add job-tracking columns to the CSV and carry earlier values forward (headless setup)",
     )
     parser.add_argument(
         "--non-interactive",
@@ -620,6 +635,7 @@ def run_sweep_pipeline(
     export = config.get("export", {})
     formats = [f.strip().lower() for f in export.get("format", "pdf,csv").split(",") if f.strip()]
     output_dir = export.get("output_dir", "results")
+    job_tracking = tracking_enabled(export)
 
     titles_display = ", ".join(titles) if titles else "All Titles"
     location_suffix = []
@@ -841,8 +857,17 @@ def run_sweep_pipeline(
 
     if "csv" in formats:
         export_rows = cards if report_style != "legacy" else scored_jobs
-        num_rows, num_cols = export_to_csv(export_rows, csv_file)
+        previous = load_previous(output_dir, profile_stem, exclude=csv_file) if job_tracking else None
+        num_rows, num_cols = export_to_csv(
+            export_rows, csv_file, tracking=job_tracking, previous=previous
+        )
         log_fn(f"  -> Building CSV: {num_rows} rows, {num_cols} columns")
+        if job_tracking:
+            carried_rows = carried_count(export_rows, previous)
+            if carried_rows:
+                log_fn(f"  * Tracking: carried earlier values into {carried_rows} row(s)")
+            else:
+                log_fn("  * Tracking: ready to fill in Excel, Sheets, or Notion")
         log_fn(f"  * CSV saved: {csv_file}")
         generated_reports["csv"] = os.path.realpath(csv_file)
 

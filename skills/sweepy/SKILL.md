@@ -104,6 +104,9 @@ keyword results or available job evidence cannot support responsible LLM assessm
 Call `export_report` with `formats=["csv"]` (optionally add `"pdf"`, `"json"`, or
 `"png"`). Pass `json_source` to target a specific sweep result, or `profile_stem` to
 pick the latest result for a profile. Use `output_dir` to control where the files land.
+A tracking-enabled profile adds `date_applied`, `status`, `interview_stage`,
+`offer_amount`, `offer_date`, `follow_up_date`, `contact`, and `notes`. Sweepy copies
+earlier entries into later exports. Pass `job_tracking` to override the profile setting.
 
 ## CLI fallback
 

@@ -99,9 +99,19 @@ def test_genuine_404_is_dead():
 
 
 def test_transient_statuses_cover_rate_limit_and_block_codes():
-    assert validator._UNVERIFIED_STATUSES == {403, 408, 425, 429, 500, 502, 503, 504}
+    assert validator._UNVERIFIED_STATUSES == {401, 403, 408, 425, 429, 500, 502, 503, 504}
     assert 404 not in validator._UNVERIFIED_STATUSES
     assert 410 not in validator._UNVERIFIED_STATUSES
+
+
+def test_indeed_login_wall_never_prunes_a_posting():
+    """Indeed answers 401 for every job ID, including ones that never existed."""
+    job = {"url": "https://www.indeed.com/viewjob?jk=9c043d1d91a4b7f8", "title": "T"}
+    with patch("requests.head", return_value=FakeResponse(401, "", {})):
+        assert validator.check_url(job["url"]) == "unverified"
+        valid, expired = validator.filter_valid_jobs([job])
+    assert expired == 0
+    assert valid[0]["unverified"] is True
 
 
 @pytest.mark.parametrize("status", sorted(validator._UNVERIFIED_STATUSES))

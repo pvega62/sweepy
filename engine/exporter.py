@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import pymupdf
+
+from engine.tracking import TRACKING_COLUMNS, backfill
 
 PNG_DPI = 200
 
@@ -40,7 +42,18 @@ EXPORT_COLUMNS = [
     'description'
 ]
 
-def export_to_csv(jobs: List[Dict], output_path: str) -> Tuple[int, int]:
+def export_to_csv(
+    jobs: List[Dict],
+    output_path: str,
+    *,
+    tracking: bool = False,
+    previous: Optional[Dict[str, Dict[str, str]]] = None,
+) -> Tuple[int, int]:
+    """Write the sweep results to CSV.
+
+    ``tracking`` appends the job-tracking columns after ``description``, and
+    ``previous`` fills them with values from earlier exports of the same profile.
+    """
     if not jobs:
         return 0, 0
 
@@ -55,12 +68,20 @@ def export_to_csv(jobs: List[Dict], output_path: str) -> Tuple[int, int]:
             row['missing_skills'] = ", ".join(row['missing_skills'])
         rows.append(row)
 
+    columns = list(EXPORT_COLUMNS)
+    if tracking:
+        for row in rows:
+            for col in TRACKING_COLUMNS:
+                row.setdefault(col, "")
+        backfill(rows, previous)
+        columns += TRACKING_COLUMNS
+
     df = pd.DataFrame(rows)
-    for col in EXPORT_COLUMNS:
+    for col in columns:
         if col not in df.columns:
             df[col] = ""
 
-    df = df[EXPORT_COLUMNS]
+    df = df[columns]
     df.to_csv(output_path, index=False, encoding='utf-8')
     return len(df), len(df.columns)
 

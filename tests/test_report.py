@@ -1,11 +1,12 @@
 import math
 import os
+import re
 
 import pymupdf
 
 from engine.exporter import export_to_png
 from engine.pdf_builder import build_pdf, format_compensation
-from engine.report import build_report
+from engine.report import build_report, playbook_to_markup
 
 
 def _card(i, match_kind="overlap", extended=False):
@@ -238,3 +239,38 @@ def test_export_to_png_writes_one_image_per_page(tmp_path):
     assert [os.path.basename(p) for p in paths] == ["r_page1.png", "r_page2.png"]
     for path in paths:
         assert os.path.getsize(path) > 0
+
+
+def test_playbook_to_markup_escapes_and_breaks_lines():
+    markup = playbook_to_markup("R&D at Smith <LLP>\nSecond line")
+    assert markup == "R&amp;D at Smith &lt;LLP&gt;<br/>Second line"
+
+
+def test_playbook_to_markup_supports_bold_and_trims_blank_lines():
+    markup = playbook_to_markup("\n**Apply first**\n\n")
+    assert markup == "<b>Apply first</b>"
+
+
+def test_playbook_to_markup_empty():
+    assert playbook_to_markup("") == ""
+    assert playbook_to_markup("   \n \n") == ""
+
+
+def test_playbook_text_renders_literally(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    build_report([_card(1)], path, _profile(max_cards=1), playbook="R&D at Smith <LLP>\nNext line")
+    text = _pages(path)[-1][0]
+    assert "R&D at Smith <LLP>" in text
+    assert "Next line" in text
+
+
+def test_playbook_reserves_space_only_on_the_last_page(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    tall = "PROBE\n" + "\n".join(f"line {i}" for i in range(20))
+    cards = [_card(i) for i in range(1, 25)]
+    pages = build_report(cards, path, _profile(), playbook=tall)
+    per_page = [len(re.findall(r"\d+% (?:MATCH|KEYWORD OVERLAP)", page[0])) for page in _pages(path)]
+    assert pages == len(per_page)
+    assert sum(per_page) == 24
+    # Only the final page may leave room for the playbook box.
+    assert per_page[:-1] == [6] * (len(per_page) - 1)

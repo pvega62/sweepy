@@ -18,6 +18,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the current version and release history.
 - **Skips postings you already saw.** A daily sweep reports new roles instead of yesterday's list. Reported postings stay hidden for a four-day window, and `--include-seen` brings them back for one run.
 - **Routes you to the right resume.** Sends each job to the resume track you wrote for that role, then labels the card with a color badge.
 - **Builds a report you can use.** Produces a card-per-page PDF with clickable links, plus CSV and JSON files for your own tracking.
+- **Turns the CSV into an application tracker.** The CSV ends with `date_applied`, `status`, `interview_stage`, `offer_amount`, `offer_date`, `follow_up_date`, `contact`, and `notes`. Fill them in through Excel, Google Sheets, or Notion. Sweepy copies your entries into later sweeps of the same profile. The PDF gives you one ranked reading list with apply links on each card. The spreadsheet keeps roles past the PDF card limit and records what you did about each one. Turn the columns off with `export.tracking: false`.
 
 ## Quick start
 
@@ -42,7 +43,7 @@ pip install -e ".[all-engines]"
 
 That adds HireHunt, openroles, and Apify in one resolution. `jobdrop` stays out because its metadata cannot resolve next to JobSpy. Install it with `sweepy --install-engines jobdrop --allow-engine-conflicts` when you want its 33 boards. The [Job engines](#job-engines) section covers both paths.
 
-Running `sweepy` opens the wizard's tile-based launchpad. Use the arrow keys to move between **Launch Sweep**, **Build Profile**, **Load Profile**, **Sweep Settings**, **Sweepy's Toolbox**, and **Exit Sweepy**, then press Enter. Each tile's subtitle states the action in a few plain words, such as **Run your job search now**, **Open a search you saved**, or **Ranking, cards, history**. **Load Profile** lets you choose a saved profile to use for the next sweep. The toolbox contains profile editing, engine management, debug logging, help, recent logs, document conversion, and updates. **Build Profile** collects your name, target job titles, location, and resume path. The wizard saves the profile when you finish. Run `sweepy --setup --profile profiles/your_profile.yaml` to edit a profile directly.
+Running `sweepy` opens the wizard's tile-based launchpad. Use the arrow keys to move between **Launch Sweep**, **Build Profile**, **Load Profile**, **Sweep Settings**, **Sweepy's Toolbox**, and **Exit Sweepy**, then press Enter. Each tile's subtitle states the action in a few plain words, such as **Run your job search now**, **Open a search you saved**, or **Ranking, cards, tracking**. **Load Profile** lets you choose a saved profile to use for the next sweep. The toolbox contains profile editing, engine management, debug logging, help, recent logs, document conversion, and updates. **Build Profile** collects your name, target job titles, location, and resume path. The wizard saves the profile when you finish. Run `sweepy --setup --profile profiles/your_profile.yaml` to edit a profile directly.
 
 Submenus open with **← Back**, which returns to the menu that opened them. Esc does the same. At a question, Esc reopens the previous answer. Inside a submenu, Esc steps up one level. At the launchpad, Esc exits. Ctrl+C quits from anywhere.
 
@@ -92,7 +93,17 @@ sweepy --setup --non-interactive \
   --timeout 120 --no-cache
 ```
 
-Every enabled engine validates before the file is written, so a missing required field fails fast with the reason. In the interactive wizard, leave OpenRoles company slugs blank to skip that engine; OpenRoles only searches named company boards. Non-interactive profiles that enable OpenRoles still need `--openroles-companies`. Non-interactive flags cover `--sources`, `--jobspy-sites`, `--hirehunt-sources`, `--jobdrop-sites`, `--openroles-companies`, `--apify-actor`, `--timeout`, `--cache-ttl`, `--no-cache`, `--history-days`, and `--no-history`.
+Every enabled engine validates before the file is written, so a missing required field fails fast with the reason. In the interactive wizard, leave OpenRoles company slugs blank to skip that engine; OpenRoles only searches named company boards. Non-interactive profiles that enable OpenRoles still need `--openroles-companies`. Non-interactive flags cover `--sources`, `--jobspy-sites`, `--hirehunt-sources`, `--jobdrop-sites`, `--openroles-companies`, `--apify-actor`, `--timeout`, `--cache-ttl`, `--no-cache`, `--history-days`, `--no-history`, and `--job-tracking` / `--no-job-tracking`.
+
+Fill in a profile file when you prefer an editor to prompts and tool calls:
+
+```bash
+cp profiles/template_custom.yaml profiles/my_search.yaml
+# replace the four REQUIRED values, then run the copy
+sweepy --profile profiles/my_search.yaml
+```
+
+The template documents every setting with its default. Sweepy prints your name, titles, and location before discovery starts. A typo shows up on the first output line.
 
 Convert a resume or notes file to PDF without opening the wizard:
 
@@ -115,7 +126,7 @@ A sweep takes 30 to 90 seconds. Sweepy prints its progress as it works:
 Every run writes date-stamped files to the `results/` folder, so nothing you already have gets overwritten.
 
 - **A PDF report.** One card per role, sorted by match score, with pay, benefits, and a link to apply.
-- **A CSV file.** Every field plus the full posting text. Open it in Excel, Google Sheets, or Notion.
+- **A CSV file.** Every card field plus a 1,000-character posting excerpt, plus eight job-tracking columns that Sweepy copies into later sweeps. Open it in Excel, Google Sheets, or Notion.
 - **A JSON file.** The same data in a format other tools can read.
 
 Open the [sample PDF](docs/sample_report.pdf), or view [page 1 as an image](docs/sample_report.png).
@@ -271,11 +282,15 @@ history:
 
 The orchestrator handles the rest. It dispatches by name and enforces the timeout. Any frame that comes back gets normalized.
 
-## Add AI judgment (optional)
+## Agent judgment (default in MCP)
 
-Sweepy scores postings by shared vocabulary, which keeps a sweep free, offline, and repeatable. Connect an AI assistant through the Model Context Protocol (MCP) when you want an evidence-based assessment of fit.
+Sweepy scores postings by shared vocabulary, which keeps a sweep free, offline, and repeatable. That score measures wording, not fit, so the MCP server treats an agent assessment as the expected path.
 
-`run_sweep` does not call a model. In the MCP workflow, inspect roles with `get_jobs`, submit independent, evidence-based assessments with `submit_judgments`, then call `render_report`. Assessed cards show `NN% MATCH`; cards without a submitted assessment keep the `NN% KEYWORD OVERLAP` label.
+`run_sweep` does not call a model. It returns `assessment_mode: "agent"`, `assessment_required: true`, and `assessed_count: 0`. The workflow continues with `get_jobs`, an independent assessment of each role against the résumé, `submit_judgments`, and `render_report`. Pass every judgment in one `judgments` list to keep a 24-role assessment to a single call. Assessed cards show `NN% MATCH`; unassessed cards keep `NN% KEYWORD OVERLAP`.
+
+`render_report` takes a `playbook` argument for the closing strategy box. Write plain prose: Sweepy escapes ampersands and angle brackets, turns newlines into line breaks, and renders `**bold**`. The text saves with the session, so a later render keeps it instead of reverting to the generated playbook. A new sweep clears it.
+
+In `agent` mode, `render_report` refuses to build a mixed report. It returns an error listing the unassessed job ids so the assistant knows what to judge. Profiles that want keyword-only reports set `report.assessment: "keyword"`, which is the CLI's behavior. Set `SWEEPY_REQUIRE_JUDGMENTS=1` when the gate must apply to every profile and to `export_report` as well.
 
 A live sweep scrapes boards for minutes, so the MCP server runs it in the background. `run_sweep` waits at most 45 seconds and then returns `sweep_status: "running"` with a `job_id`. Poll `get_sweep_status` until it reports `completed`; the sweep keeps running if the client disconnects. Set `SWEEPY_MCP_WAIT_SECONDS` to lower the wait for hosts with tighter tool timeouts.
 
