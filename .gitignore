@@ -25,8 +25,13 @@ results/
 logs/
 
 # User-specific profiles (keep template_custom.yaml)
-profiles/pedro_writer.yaml
+profiles/pedro_vega_writer.yaml
 profiles/.last_profile
+profiles/k_jenkins_teacher.yaml
+profiles/tech_writer.yaml
+profiles/pedro_vega_portfolio_resume.yaml
+profiles/pedro_vega_technical_writer.yaml
+
 
 # Vale
 styles/
