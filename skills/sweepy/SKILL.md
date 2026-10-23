@@ -1,6 +1,6 @@
 ---
 name: sweepy
-description: Run the Sweepy job search engine from this CLI. Use /sweepy to create a search profile, scrape and score jobs, review matches, and export CSV/PDF reports through Sweepy's MCP server.
+description: Use /sweepy to find jobs through Sweepy's MCP, assess roles against the user's resume with LLM judgments, review matches, and export reports.
 ---
 
 # Sweepy
@@ -32,26 +32,81 @@ Register Sweepy's MCP server in the CLI's MCP configuration:
 Replace `/path/to/sweepy` with the absolute path to the repository. Restart the CLI
 after editing the configuration.
 
-## Start a new scrape
+## Start a new LLM-assisted search
 
 1. Call `create_profile` with the candidate's name, target job titles, location, and
-   resume PDF path. Optional fields (remote/hybrid preference, minimum salary,
-   must-have skills) use sensible defaults when omitted.
-2. Call `run_sweep` with the saved profile path. This discovers, validates, scores,
-   and renders the report in one pass and returns the top roles and report paths.
+   resume PDF or DOCX path. Optional fields (remote/hybrid preference, minimum salary,
+   must-have skills) use defaults when omitted. Without `sources_config`, the MCP
+   enables built-in engines and installed optional engines that pass default
+   configuration checks. Read and report `enabled_engines` and `engines_not_enabled`.
+   OpenRoles only searches named company boards; the interactive wizard skips it when
+   the user leaves company slugs blank. Apify may incur charges and requires explicit user
+   opt-in. Do not ask the user to choose engines for every search or install packages
+   automatically. Ask only when a requested engine needs configuration, paid-service
+   consent, or a search constraint. Preserve any explicit `sources_config` unchanged.
+   Set `cache_config.enabled` and `cache_config.ttl_seconds` to tune caching. Set
+   `orchestrator_config.timeout_per_source_seconds` and its `circuit_breaker` fields
+   to tune per-engine resilience. Set `history_config` (`enabled`, `retention_days`,
+   `match`, `path`) to control how long reported postings stay hidden.
+2. Call `run_sweep` with the saved profile path. This discovers and validates postings,
+   then generates deterministic keyword-overlap scores. It does not perform LLM
+   assessment by itself; tell the user that these initial scores are preliminary.
+   Sweepy removes duplicate URLs and same-role postings across boards by default. Pass
+   `deduplicate=false` to `run_sweep` to keep duplicates for one run without changing
+   the saved profile.
 
-## View the results of a scrape
+   Sweepy also hides postings reported in earlier sweeps. The default retention window
+   is four days. When the user asks for roles they saw before, pass `include_seen=true`
+   or call `clear_history` to forget the profile's history. A sweep with no new postings
+   reports `previously_seen_count` and a `message`; relay it as a normal result.
+3. The pipeline scrapes live boards for minutes, so it runs in the background. When
+   `run_sweep` returns `sweep_status: "running"`, call `get_sweep_status` with the
+   returned `job_id` and repeat until it reports `completed`. Each call waits only its
+   own `wait_seconds`, which keeps every request inside the client timeout. The sweep
+   keeps running if the client disconnects.
 
-- Call `get_results` to retrieve the top matches with scores, companies, locations,
-  and playbook recommendations without re-running discovery.
-- Call `get_jobs` to inspect the full deterministic card set in the current session
-  before supplying any LLM judgment.
+## Compensate for scraper limits
+
+- Treat Sweepy's results as a useful, non-exhaustive candidate set. Inspect
+  `skipped_sources` from `run_sweep` and `engines_not_enabled` from `create_profile`.
+  Report material failures; do not imply that every source returned results.
+- Review jobs with `get_jobs`. Check each role against the user's preferences and
+  resume, and submit corrected match assessments only when job details support them.
+- If the host provides web or search tools, verify postings through employer career
+  pages or their ATS and look for relevant roles Sweepy missed. Add only verified,
+  non-duplicate roles with `import_jobs`, then include them in `render_report`.
+- A 403, 429, timeout, or bot-protection response means the URL remains unverified;
+  it does not show that a posting expired. Check an accessible employer source when
+  possible. If you cannot confirm the status, label that uncertainty.
+- Never fabricate listings or fill missing salary, requirements, or resume evidence
+  with guesses. Without suitable search tools or accessible sources, explain that the
+  result set may be incomplete. Do not repeat a sweep with unchanged inputs after a
+  source error; retry only after a meaningful change or likely transient failure.
+
+## Assess and report matches
+
+- By default, do not stop at keyword scores and do not wait for the user to request the
+  LLM boost. Call `get_jobs` to inspect the available details for relevant roles.
+- Compare each assessable role with the candidate's resume and stated preferences. Submit
+  an independent `match_pct` and evidence-grounded card fields through `submit_judgments`.
+  Never copy the deterministic overlap score into `match_pct` or invent unsupported job
+  requirements. If evidence is insufficient, disclose the limitation and retain the
+  `KEYWORD OVERLAP` label for that role.
+- Call `render_report` after submitting judgments so the PDF reflects assessed matches.
+- Call `get_results` for initial sweep metadata, but treat scores labeled `KEYWORD OVERLAP`
+  as unassessed. Present `NN% MATCH` only for cards with submitted LLM judgments.
+
+Use a keyword-only scrape and report only when the user explicitly requests deterministic
+keyword results or available job evidence cannot support responsible LLM assessment.
 
 ## Export results to a CSV file
 
 Call `export_report` with `formats=["csv"]` (optionally add `"pdf"`, `"json"`, or
 `"png"`). Pass `json_source` to target a specific sweep result, or `profile_stem` to
 pick the latest result for a profile. Use `output_dir` to control where the files land.
+A tracking-enabled profile adds `date_applied`, `status`, `interview_stage`,
+`offer_amount`, `offer_date`, `follow_up_date`, `contact`, and `notes`. Sweepy copies
+earlier entries into later exports. Pass `job_tracking` to override the profile setting.
 
 ## CLI fallback
 
@@ -60,12 +115,18 @@ When MCP tools are unavailable, run the CLI from the repository root:
 ```bash
 python swee.py --setup                 # interactive profile wizard
 python swee.py --profile profiles/your_profile.yaml
+python swee.py --run --include-seen    # report postings from earlier sweeps too
+python swee.py --run --reset-history   # forget earlier postings, then sweep
 python swee.py --docx resume.docx      # convert a DOCX resume to PDF
+python swee.py --convert notes.md      # convert any supported document to PDF
 ```
 
 ## Notes
 
-- Sweepy works with or without an LLM. Without an LLM it produces deterministic
-  `NN% KEYWORD OVERLAP` scores; `submit_judgments` upgrades a card to an
-  LLM-supplied `NN% MATCH`.
-- The hybrid flow is `run_sweep → get_jobs → submit_judgments → render_report`.
+- `run_sweep` produces deterministic `NN% KEYWORD OVERLAP` scores; it does not invoke an
+  LLM automatically. The default MCP-assisted workflow is
+  `run_sweep → get_sweep_status → get_jobs → assess roles → submit_judgments → render_report`.
+- `submit_judgments` upgrades a card to `NN% MATCH` only when the assistant supplies an
+  independent, evidence-based assessment.
+- Sweeps skip postings reported in an earlier run for the same profile. The default
+  retention window is four days; `include_seen=true` or `clear_history` overrides it.

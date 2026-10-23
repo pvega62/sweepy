@@ -5,12 +5,26 @@ requests==2.32.5
 beautifulsoup4==4.15.0
 pyyaml==6.0.3
 questionary==2.1.1
+prompt-toolkit==3.0.53
 python-jobspy==1.2.0
 # pandas is pinned to 2.x to stay compatible with the Python 3.10 CI matrix
 # (pandas 3.x requires Python 3.11+).
 pandas==2.2.3
-mcp==2.3.0
+# mcp 1.x is pinned on purpose. The 2.x SDK serves only the 2026-07-28 protocol
+# era over stdio: a client that probes `server/discover` and then falls back to
+# the 2025-11-25 `initialize` handshake (VS Code Copilot does this) gets -32022
+# because the first modern request locks the connection to the modern era.
+# mcp 1.30.0 serves 2025-11-25 directly and negotiates cleanly.
+mcp==1.30.0
 anyio==4.12.1
+
+# Optional job engines (hirehunt, openroles, apify) install with the pyproject
+# extras or the engine installer. Nothing here needs a second install command:
+#   pip install -e ".[all-engines]"      # one resolution, all compatible engines
+#   sweepy --install-engines all         # same set, one at a time
+# jobdrop needs `sweepy --install-engines jobdrop --allow-engine-conflicts`
+# because its curl-cffi pin cannot resolve next to JobSpy.
+# Sweepy skips an engine whose library is missing instead of failing a sweep.
 
 # NOTE: On Python 3.13, pymupdf may require source compilation if pre-built
 # wheels are not yet available. Install the Microsoft C++ Build Tools

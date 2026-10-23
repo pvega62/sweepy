@@ -17,6 +17,7 @@ search:
   remote_only: false
   include_hybrid: true   # Set to false to exclude hybrid positions
   min_salary: 65000
+  salary_from_description: true   # Read pay from the posting text when a board omits structured pay
 
 resume:
   path: "C:/path/to/resume.pdf"
@@ -26,6 +27,15 @@ resume:
     - "e-discovery"
     - "Contract Review"
   keywords_weight: 1.5
+  # Optional: interchangeable terms. Sweepy matches every member of a group in both
+  # directions, so a posting that writes `electronic discovery` matches a resume
+  # that writes `e-discovery`. Each group needs at least two terms.
+  synonyms:
+    - [e-discovery, ediscovery, electronic discovery]
+    - [legal research, case law research]
+    - [docketing, case calendaring]
+    - [legal assistant, legal secretary]
+    - [contract review, contract analysis, agreement review]
   # Optional: multiple resume tracks for dual-targeting. The best track is chosen per
   # job by keyword overlap; leave empty to use `path` as a single implicit track.
   tracks:
@@ -56,11 +66,27 @@ platforms:
 # Deterministic (no-key) sources. Empty boards/orgs/slugs/categories fall back to the
 # curated seed lists in data/sources/. Each source also honors its platforms.<x> flag.
 sources:
+  # Optional. When omitted, Sweepy enables JobSpy plus the native ATS readers.
+  # Optional engines (`hirehunt`, `openroles`, `jobdrop`, `apify`) need their library
+  # installed first. `sweepy --install-engines all` installs the compatible engines.
+  # Install jobdrop separately with
+  # `sweepy --install-engines jobdrop --allow-engine-conflicts`, or pick
+  # "Download job engines" in Sweepy's Toolbox.
+  # enabled: [jobspy, ats, openroles]
   jobspy:
     linkedin: true
     indeed: true
     glassdoor: true
     zip_recruiter: true
+    # Newer shape; takes precedence over the board booleans above.
+    # sites: [linkedin, indeed, glassdoor, zip_recruiter]
+    # Proxies are opt-in and stay local to your machine.
+    # proxies: ["user:pass@host:port"]
+    # Restore the built-in Chrome User-Agent by leaving this out.
+    # user_agent: null
+    # Descriptions supply the scoring text. Turn this off only when you accept
+    # weaker match scores in exchange for a faster sweep.
+    fetch_descriptions: true
   greenhouse:
     enabled: true
     boards: []          # e.g. ["databricks", "gitlab", "cloudflare", "robinhood"]
@@ -76,13 +102,64 @@ sources:
   builtinnyc:
     enabled: true
     categories: []      # e.g. ["jobs/technical-writer"]
+    detail_pages: false # read each posting's full text (Built In rate-limits these pages)
+
+  # Optional engines. Uncomment a block after installing its library.
+  # hirehunt:
+  #   sources: [linkedin, indeed, naukri, internshala, shine]
+  # openroles:
+  #   ats: [greenhouse, lever, ashby, workday]
+  #   companies: [figma, stripe, notion]   # required to enable OpenRoles; it reads boards you name
+  # jobdrop:
+  #   sites: [linkedin, indeed, google, glassdoor]
+  #   headless: true
+  #   fetch_descriptions: true
+  # apify:
+  #   actor: curious_coder/linkedin-jobs-scraper   # reads APIFY_TOKEN from the environment
+
+cache:
+  enabled: true
+  ttl_seconds: 3600
+
+# Cross-run history. Sweepy records every posting it reports and hides those
+# postings on later sweeps. A posting can reappear after retention_days pass.
+# `match: url` requires the same canonical URL; `url+role` also matches the same
+# title, company, and location on another board. `path: null` uses
+# ~/.sweepy/history.db, and SWEEPY_HISTORY_PATH overrides it.
+history:
+  enabled: true
+  retention_days: 4
+  match: "url+role"
+  path: null
+
+orchestrator:
+  timeout_per_source_seconds: 180
+  circuit_breaker:
+    failure_threshold: 5
+    cooldown_seconds: 30
 
 report:
-  style: "cards"        # "cards" (default) | "legacy"
-  cards_per_page: 4
+  style: "cards"
+  # Use up to six cards per page; long cards reduce the count to keep the layout clear.        # "cards" (default) | "legacy"
+  cards_per_page: 6
   max_cards: 24         # 0 = unlimited
   destinations: []      # extra directories to copy the PDF into
+
+  # How MCP reports handle unassessed cards. `agent` (default) makes render_report
+  # refuse a keyword-only report and name the role ids that still need a judgment.
+  # `keyword` keeps keyword-overlap reports available without agent assessment.
+  # SWEEPY_REQUIRE_JUDGMENTS=1 enforces `agent` behavior for every profile.
+  assessment: "agent"
 
 export:
   format: "pdf,csv"
   output_dir: "results"
+
+  # Append job-tracking columns to the CSV: date_applied, status, interview_stage,
+  # offer_amount, offer_date, follow_up_date, contact, and notes. Values you enter
+  # carry over to the next sweep of this profile. Set to false for raw data only.
+  tracking: true
+
+  # Characters of posting text saved in the CSV and JSON. Sweepy cuts on a
+  # sentence boundary. Set to 0 to keep the whole posting.
+  description_chars: 1000
