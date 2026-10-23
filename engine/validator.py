@@ -17,6 +17,14 @@ _HEADERS = {
 
 _SOFT_404_DOMAINS = ("ashbyhq.com", "greenhouse.io", "lever.co")
 
+# Statuses that mean "cannot verify", never "dead". Rate limiting and bot protection
+# answer with these codes while the posting stays live: a measured request returned
+# HEAD 429 while a GET on the same URL returned 200 with the full 312 KB job page.
+# LinkedIn, Indeed, and Glassdoor routinely answer HEAD with 401, 403, or 429, so
+# pruning on these codes silently deletes valid postings. Indeed answers 401 for
+# every job ID, including ones that never existed, so that code proves nothing.
+_UNVERIFIED_STATUSES = frozenset({401, 403, 408, 425, 429, 500, 502, 503, 504})
+
 
 def _content_length(response: requests.Response) -> int:
     raw = response.headers.get("content-length")
@@ -68,38 +76,62 @@ def _check(url: str) -> requests.Response:
     return response
 
 
-def is_valid_url(url: str) -> bool:
+def _classify(url: str) -> Tuple[str, str]:
     """
-    Validate a job URL to ensure it is still active.
-    Handles standard HTTP 404s and platform-specific dead pages (e.g., Ashby).
-    Raises requests.Timeout so callers can keep the job as "unverified" instead of pruning it.
+    One network pass that classifies a URL into a state plus a log reason.
+
+    The state is ``"valid"``, ``"unverified"``, or ``"dead"``. ``"unverified"`` means
+    the host refused to answer (rate limit, bot protection, or a transient server
+    error), so the posting must be kept instead of pruned.
     """
     try:
         response = _check(url)
     except requests.Timeout:
-        raise
+        return "unverified", "timeout"
     except requests.RequestException:
-        return False
+        return "dead", "connection error"
+
+    if response.status_code in _UNVERIFIED_STATUSES:
+        return "unverified", f"HTTP {response.status_code}"
 
     if response.status_code >= 400:
-        return False
+        return "dead", f"HTTP {response.status_code}"
 
     domain = urlparse(url).netloc.lower()
     if any(d in domain for d in _SOFT_404_DOMAINS):
-        return not _soft_404(domain, getattr(response, "text", ""))
+        if _soft_404(domain, getattr(response, "text", "")):
+            return "dead", "soft 404"
 
-    return True
+    return "valid", f"HTTP {response.status_code}"
 
 
-def _classify_job(job: dict) -> Tuple[dict, str]:
+def check_url(url: str) -> str:
+    """
+    Classify a job URL as ``"valid"``, ``"unverified"``, or ``"dead"``.
+
+    Callers that prune postings must treat ``"unverified"`` as alive: a timeout, a
+    rate limit, or a bot-protection block tells you nothing about the posting itself.
+    """
+    return _classify(url)[0]
+
+
+def is_valid_url(url: str) -> bool:
+    """
+    Validate a job URL to ensure it is still active.
+    Handles standard HTTP 404s and platform-specific dead pages (e.g., Ashby).
+    Returns True for unverifiable responses (timeout, 403, 429, 5xx) so a transient
+    code never prunes a live posting. Only a definite dead link returns False.
+    """
+    return check_url(url) != "dead"
+
+
+def _classify_job(job: dict) -> Tuple[dict, str, str]:
+    """Return ``(job, state, reason)`` where ``state`` matches ``check_url``."""
     url = job.get("url")
     if not url:
-        return job, "dead"
-    try:
-        ok = is_valid_url(url)
-    except requests.Timeout:
-        return job, "unverified"
-    return job, "valid" if ok else "dead"
+        return job, "dead", "missing url"
+    state, reason = _classify(url)
+    return job, state, reason
 
 
 def filter_valid_jobs(
@@ -111,7 +143,7 @@ def filter_valid_jobs(
     plus the count of expired jobs. Preserves input order.
     """
     n = len(jobs)
-    results: List[Optional[Tuple[dict, str]]] = [None] * n
+    results: List[Optional[Tuple[dict, str, str]]] = [None] * n
     done = 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
@@ -125,13 +157,13 @@ def filter_valid_jobs(
 
     valid_jobs = []
     expired_count = 0
-    for job, state in results:
+    for job, state, reason in results:
         if state == "valid":
             valid_jobs.append(job)
         elif state == "unverified":
             job["unverified"] = True
             valid_jobs.append(job)
-            log.info("Keeping unverified (timeout): %s", job.get("url"))
+            log.info("Keeping unverified (%s): %s", reason, job.get("url"))
         else:
             expired_count += 1
 

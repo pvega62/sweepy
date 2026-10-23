@@ -1,3 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sweepy"
+dynamic = ["version", "dependencies"]
+description = "Automated job board aggregator that scores every posting against your resume."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+
+[project.scripts]
+sweepy = "swee:main"
+
+[tool.setuptools]
+py-modules = ["swee", "server"]
+
+[tool.setuptools.packages.find]
+include = ["engine*"]
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
+dependencies = { file = ["requirements.txt"] }
+
+[project.optional-dependencies]
+# `pip install -e ".[engines]"` pulls the optional scraper libraries.
+# The wizard's "Download job engines" screen and `sweepy --install-engines`
+# install the same packages one at a time.
+#
+# jobdrop stays out of `engines` and `all-engines`: it pins curl-cffi<0.8 while
+# JobSpy requires curl_cffi>=0.16.2, so pip cannot resolve them together.
+engines = [
+    "hirehunt>=0.5,<0.6",
+    "openroles>=0.1.2,<0.2",
+]
+apify = ["apify-client>=3.3,<4"]
+all-engines = [
+    "hirehunt>=0.5,<0.6",
+    "openroles>=0.1.2,<0.2",
+    "apify-client>=3.3,<4",
+]
+# No `jobdrop` extra on purpose: pip resolves extras together with the core
+# requirements, and jobdrop's curl-cffi pin makes that resolution fail every time.
+# Install it through the engine installer, which skips the stale pin:
+#   sweepy --install-engines jobdrop --allow-engine-conflicts
+
 [tool.ruff]
 target-version = "py310"
 line-length = 100

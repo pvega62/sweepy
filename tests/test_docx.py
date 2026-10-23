@@ -45,6 +45,30 @@ def test_convert_wrong_extension_raises(tmp_path):
         convert_docx_to_pdf(str(path))
 
 
+def test_convert_preserves_table_text(tmp_path):
+    import docx
+    import pymupdf
+
+    docx_path = str(tmp_path / "with_table.docx")
+    document = docx.Document()
+    document.add_heading("Resume", level=1)
+    document.add_paragraph("A short paragraph about me.")
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "Skills"
+    table.cell(0, 1).text = "Python React SQL"
+    document.save(docx_path)
+
+    out = convert_docx_to_pdf(docx_path)
+    doc = pymupdf.open(out)
+    try:
+        text = "".join(page.get_text() for page in doc)
+    finally:
+        doc.close()
+
+    assert "Python React SQL" in text
+    assert "Skills" in text
+
+
 def test_safe_pdf_name_defaults_next_to_docx(tmp_path):
     docx_path = str(tmp_path / "resume.docx")
     assert safe_pdf_name(docx_path) == os.path.realpath(str(tmp_path / "resume.pdf"))

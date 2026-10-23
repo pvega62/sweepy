@@ -22,9 +22,6 @@ replit
 llamaindex
 bruno
 afterquery
-stripe
-google-deepmind
-braze
 
 # Legal / Law Firms
 crosby

@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
-from jobspy import scrape_jobs
 
+from engine.adapters import ADAPTERS
+from engine.cache import ResultCache, cache_key
+from engine.circuit_breaker import CircuitBreaker
+from engine.engine_defaults import DEFAULT_JOBSPY_SITES
+from engine.normalize import normalize_all
+from engine.salary import annual_max_amount, extract_pay
 from engine.sources import (
     fetch_ashby_org,
     fetch_builtin,
@@ -22,14 +29,28 @@ from engine.sources import (
     load_workable_slugs,
 )
 from engine.sources._common import title_matches
+from engine.sweep_config import normalize_sources
 
 log = logging.getLogger("sweepy.engine.discovery")
 
 _HYBRID_RE = re.compile(r"\bhybrid\b", re.IGNORECASE)
 
+# Pay intervals that aggregator feeds report alongside a numeric range.
+_PERIOD_ALIASES = {
+    "yearly": "year",
+    "annual": "year",
+    "annually": "year",
+    "monthly": "month",
+    "weekly": "week",
+    "daily": "day",
+    "hourly": "hour",
+}
+
 _REQUEST_DELAY = float(os.environ.get("SWEEPY_SOURCE_DELAY", "0.2"))
 
-_DEFAULT_JOBSPY_SITES = ["linkedin", "indeed", "glassdoor", "zip_recruiter"]
+_DEFAULT_JOBSPY_SITES = list(DEFAULT_JOBSPY_SITES)
+
+CIRCUIT = CircuitBreaker()
 
 
 def classify_platform(url: str, default_site: str, custom_platforms: Optional[List[Dict]] = None) -> str:
@@ -55,6 +76,335 @@ def classify_platform(url: str, default_site: str, custom_platforms: Optional[Li
     return site_clean
 
 
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
+
+async def _run_one(adapter, query, config, timeout, pool, semaphore, circuit):
+    if circuit.is_open(adapter.name):
+        log.warning("Skipping %s: circuit open after repeated failures", adapter.name)
+        return adapter.name, None, "circuit_open"
+
+    loop = asyncio.get_running_loop()
+    try:
+        async with semaphore:
+            future = loop.run_in_executor(pool, adapter.scrape, query, config)
+            raw = await (asyncio.wait_for(future, timeout) if timeout else future)
+        circuit.record_success(adapter.name)
+        return adapter.name, adapter.normalize(raw, query), None
+    except asyncio.TimeoutError:
+        circuit.record_failure(adapter.name)
+        log.warning("Source %s timed out after %ss", adapter.name, timeout)
+        return adapter.name, None, "timeout"
+    except Exception as exc:  # failure isolation: one engine never kills the run
+        circuit.record_failure(adapter.name)
+        log.warning("Source %s failed: %s", adapter.name, exc)
+        log.debug("Source %s traceback", adapter.name, exc_info=True)
+        return adapter.name, None, str(exc)
+
+
+async def scrape_all(
+    query: dict,
+    enabled_sources: Optional[List[str]] = None,
+    engine_configs: Optional[Dict[str, dict]] = None,
+    *,
+    timeout_per_source: Optional[float] = 180,
+    use_cache: bool = True,
+    deduplicate: bool = True,
+    cache: Optional[ResultCache] = None,
+    circuit: Optional[CircuitBreaker] = None,
+) -> Tuple[pd.DataFrame, List[dict]]:
+    """Run every enabled engine concurrently and return normalized, deduped results.
+
+    Returns the merged frame and a list of ``{"name", "reason"}`` entries for
+    engines that were skipped, timed out, or failed.
+    """
+    engine_configs = engine_configs or {}
+    circuit = circuit or CIRCUIT
+    names = [name for name in (enabled_sources or []) if name]
+    skipped: List[dict] = []
+    key = None
+
+    if use_cache and cache is not None:
+        key = cache_key({**query, "deduplicate": deduplicate}, names, engine_configs)
+        cached = cache.load(key)
+        if cached is not None:
+            log.info("Cache hit for %s", ", ".join(names))
+            return cached, skipped
+
+    runnable = []
+    for name in names:
+        adapter = ADAPTERS.get(name)
+        if adapter is None:
+            log.warning("Unknown source %r ignored", name)
+            skipped.append({"name": name, "reason": "unknown source"})
+            continue
+        if circuit.is_open(name):
+            skipped.append({"name": name, "reason": "circuit_open"})
+            continue
+        runnable.append(adapter)
+
+    if not runnable:
+        return pd.DataFrame(), skipped
+
+    pool = ThreadPoolExecutor(max_workers=max(4, len(runnable) * 2))
+    semaphores = {
+        adapter.name: asyncio.Semaphore(max(1, adapter.default_concurrency))
+        for adapter in runnable
+    }
+    try:
+        tasks = [
+            asyncio.create_task(
+                _run_one(
+                    adapter,
+                    query,
+                    engine_configs.get(adapter.name, {}),
+                    adapter.effective_timeout(timeout_per_source),
+                    pool,
+                    semaphores[adapter.name],
+                    circuit,
+                )
+            )
+            for adapter in runnable
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        # A timed-out library call cannot be killed, so do not block the sweep
+        # waiting for its thread to unwind.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+    clean = []
+    for result in results:
+        if isinstance(result, BaseException):
+            log.warning("Source task failed: %s", result)
+            skipped.append({"name": "unknown", "reason": str(result)})
+            continue
+        name, frame, error = result
+        if error:
+            skipped.append({"name": name, "reason": error})
+        if frame is not None:
+            clean.append(result)
+
+    frame = normalize_all(clean, deduplicate=deduplicate)
+    if use_cache and cache is not None and key and clean:
+        cache.save(key, frame)
+    return frame, skipped
+
+
+def scrape_all_sync(*args, **kwargs) -> Tuple[pd.DataFrame, List[dict]]:
+    """Blocking wrapper for callers outside an event loop."""
+    return asyncio.run(scrape_all(*args, **kwargs))
+
+
+def build_cache(runtime: dict) -> Optional[ResultCache]:
+    cache_cfg = runtime.get("cache") or {}
+    if not cache_cfg.get("enabled", True):
+        return None
+    return ResultCache(path=cache_cfg.get("path"), ttl=float(cache_cfg.get("ttl_seconds", 3600)))
+
+
+def build_circuit(runtime: dict) -> CircuitBreaker:
+    breaker = (runtime.get("orchestrator") or {}).get("circuit_breaker") or {}
+    return CircuitBreaker(
+        failure_threshold=int(breaker.get("failure_threshold", 5)),
+        cooldown=float(breaker.get("cooldown_seconds", 30)),
+    )
+
+
+def _timeout(runtime: dict) -> float:
+    return float((runtime.get("orchestrator") or {}).get("timeout_per_source_seconds", 180))
+
+
+# ---------------------------------------------------------------------------
+# Frame conversion and filters
+# ---------------------------------------------------------------------------
+
+
+def _first(record: dict, *names, default=None):
+    for name in names:
+        if name in record:
+            value = record[name]
+            if value is None:
+                continue
+            if isinstance(value, float) and pd.isna(value):
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            return value
+    return default
+
+
+def _amount(value) -> float:
+    try:
+        return float(value) if value else 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _salary_period(value) -> str:
+    """Normalize a pay interval such as ``hourly`` or ``yearly`` into a unit."""
+    text = str(value or "").strip().lower()
+    return _PERIOD_ALIASES.get(text, text or "year")
+
+
+def _as_bool(value) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in ("true", "1", "yes", "remote"):
+        return True
+    if text in ("false", "0", "no", "onsite", "on-site"):
+        return False
+    return None
+
+
+def _platform_disabled(platform: str, platforms: dict, custom_platforms: List[dict]) -> bool:
+    key = platform.lower()
+    if key in platforms and not platforms.get(key):
+        return True
+    for custom in custom_platforms:
+        if str(custom.get("name", "")).lower() == key and not custom.get("enabled", True):
+            return True
+    return False
+
+
+def _frame_to_jobs(
+    frame: Optional[pd.DataFrame],
+    *,
+    location: str,
+    platforms: Optional[dict] = None,
+    custom_platforms: Optional[List[dict]] = None,
+    titles: Optional[List[str]] = None,
+    remote_only: bool = False,
+    include_hybrid: bool = True,
+    min_salary: int = 0,
+    filter_titles: bool = False,
+    salary_from_description: bool = True,
+) -> List[dict]:
+    """Convert a normalized frame into Sweepy's job dictionaries and apply filters."""
+    if frame is None or frame.empty:
+        return []
+
+    platforms = platforms or {}
+    custom_platforms = custom_platforms or []
+    jobs: List[dict] = []
+    for record in frame.to_dict("records"):
+        url = str(_first(record, "url", "job_url", "apply_url") or "").strip()
+        if not url:
+            continue
+
+        title = str(_first(record, "title") or "")
+        if filter_titles and not _matches_titles(title, titles or []):
+            continue
+
+        source = str(_first(record, "source", "site") or "Aggregator")
+        board = str(_first(record, "site", "board") or source)
+        platform = str(_first(record, "platform") or "") or classify_platform(
+            url, board, custom_platforms
+        )
+        if _platform_disabled(platform, platforms, custom_platforms):
+            continue
+
+        job_location = str(_first(record, "location") or location)
+        is_hybrid = bool(_HYBRID_RE.search(title) or _HYBRID_RE.search(job_location))
+        if not include_hybrid and is_hybrid:
+            continue
+
+        min_amount = _amount(_first(record, "salary_min", "min_amount"))
+        max_amount = _amount(_first(record, "salary_max", "max_amount"))
+        currency = str(_first(record, "salary_currency", "currency") or "USD")
+        salary_period = _salary_period(_first(record, "salary_period", "period", "interval"))
+        description = str(_first(record, "description") or "")
+        if salary_from_description and not min_amount and not max_amount and description:
+            pay = extract_pay(description)
+            if pay:
+                min_amount = pay["min_amount"]
+                max_amount = pay["max_amount"]
+                currency = pay["currency"]
+                salary_period = pay["period"]
+        if min_salary > 0 and max_amount > 0 and annual_max_amount(max_amount, salary_period) < min_salary:
+            continue
+
+        remote = _as_bool(_first(record, "remote", "is_remote"))
+        if remote_only and remote is False:
+            continue
+
+        jobs.append(
+            {
+                "id": str(_first(record, "id") or ""),
+                "platform": platform,
+                "url": url,
+                "apply_url": str(_first(record, "apply_url") or ""),
+                "title": title,
+                "company": str(_first(record, "company") or ""),
+                "location": job_location,
+                "job_type": str(_first(record, "employment_type", "job_type") or ""),
+                "date_posted": str(_first(record, "posted_at", "date_posted") or ""),
+                "description": description,
+                "min_amount": min_amount,
+                "max_amount": max_amount,
+                "currency": currency,
+                "salary_period": salary_period,
+                "remote": bool(remote),
+                "workplace_type": str(
+                    _first(record, "workplace_type") or ("remote" if remote else "")
+                ),
+                "source": source,
+                "skills": _first(record, "skills") or [],
+            }
+        )
+    return jobs
+
+
+def dedupe_jobs(jobs: List[dict], *, enabled: bool = True) -> List[dict]:
+    """Keep one copy of URL duplicates and same-role listings from different boards."""
+    if not enabled:
+        return [job for job in jobs if str(job.get("url") or "").strip()]
+
+    unique_urls = set()
+    role_boards: Dict[Tuple[str, str, str], set] = {}
+    unique: List[dict] = []
+    for job in jobs:
+        url = str(job.get("url") or "").strip()
+        if not url:
+            continue
+        if url in unique_urls:
+            continue
+        unique_urls.add(url)
+
+        title = re.sub(r"[\W_]+", "", str(job.get("title") or "").casefold())
+        company = re.sub(r"[\W_]+", "", str(job.get("company") or "").casefold())
+        location = re.sub(r"[\W_]+", "", str(job.get("location") or "").casefold())
+        board = str(job.get("platform") or job.get("source") or "").strip().casefold()
+        if title and company and location and board:
+            role_key = (title, company, location)
+            boards = role_boards.setdefault(role_key, set())
+            if boards and board not in boards:
+                continue
+            boards.add(board)
+        unique.append(job)
+    return unique
+
+
+def _record_skips(skipped: Optional[List[dict]], skips: List[dict]) -> None:
+    if skipped is None:
+        return
+    seen = {(entry.get("name"), entry.get("reason")) for entry in skipped}
+    for entry in skips:
+        key = (entry.get("name"), entry.get("reason"))
+        if key not in seen:
+            skipped.append(entry)
+            seen.add(key)
+
+
+# ---------------------------------------------------------------------------
+# JobSpy discovery
+# ---------------------------------------------------------------------------
+
+
 def discover_jobs(
     titles: List[str],
     location: str,
@@ -65,18 +415,24 @@ def discover_jobs(
     results_wanted: int = 25,
     progress: Optional[Callable[[int, int, str], None]] = None,
     sites: Optional[List[str]] = None,
+    *,
+    sources_config: Optional[Dict] = None,
+    runtime: Optional[Dict] = None,
+    deduplicate: bool = True,
+    cache: Optional[ResultCache] = None,
+    circuit: Optional[CircuitBreaker] = None,
+    skipped: Optional[List[dict]] = None,
+    salary_from_description: bool = True,
 ) -> Tuple[List[Dict], Dict[str, int]]:
-    """
-    Scrapes jobs across configured platforms and job boards via jobspy,
-    classifying ATS endpoints, handling custom platforms, and filtering hybrid/remote/salary.
-    """
+    """Scrape JobSpy boards per title through the adapter orchestrator."""
     if platforms is None:
         platforms = {"greenhouse": True, "ashby": True, "lever": True, "workable": True, "aggregators": False}
+    if isinstance(platforms, list):
+        platforms = {}
 
     custom_platforms = platforms.get("custom", [])
 
-    all_jobs = []
-    platform_counts = {
+    platform_counts: Dict[str, int] = {
         "Greenhouse": 0,
         "Ashby": 0,
         "Lever": 0,
@@ -85,109 +441,83 @@ def discover_jobs(
     if platforms.get("aggregators", False):
         platform_counts["Aggregators"] = 0
 
-    for cp in custom_platforms:
-        cp_name = cp.get("name", "Custom")
-        if cp.get("enabled", True):
-            platform_counts[cp_name] = 0
+    for custom in custom_platforms:
+        if custom.get("enabled", True):
+            platform_counts[custom.get("name", "Custom")] = 0
 
-    sites_to_query = [s for s in (sites or _DEFAULT_JOBSPY_SITES) if s in _DEFAULT_JOBSPY_SITES] or _DEFAULT_JOBSPY_SITES
+    runtime = runtime or normalize_sources(
+        {"sources": sources_config or {}, "platforms": platforms}
+    )
+    if "jobspy" not in runtime["enabled"]:
+        return [], platform_counts
+
+    config = dict(runtime["engines"]["jobspy"])
+    if sites:
+        filtered = [site for site in sites if site in _DEFAULT_JOBSPY_SITES]
+        config["sites"] = filtered or _DEFAULT_JOBSPY_SITES
+
+    cache = cache if cache is not None else build_cache(runtime)
+    circuit = circuit or build_circuit(runtime)
+    frames = []
 
     for idx, title in enumerate(titles):
+        query = {
+            "keywords": title,
+            "location": location,
+            "limit": results_wanted,
+            "remote_only": remote_only,
+            "hours_old": 72,
+            "country_indeed": "usa",
+            "sites": config["sites"],
+        }
         try:
-            jobs_df: pd.DataFrame = scrape_jobs(
-                site_name=sites_to_query,
-                search_term=title,
-                location=location,
-                results_wanted=results_wanted,
-                hours_old=72,
-                is_remote=remote_only,
-                # `country_indeed` is the Indeed country filter in python-jobspy (default "usa").
-                country_indeed="usa",
-                # LinkedIn and ZipRecruiter return postings without a description
-                # unless this is set, which would leave every description empty
-                # and score every role 0%. (`linkedin_fetch_description` is the
-                # deprecated name; `fetch_description` covers both sites.)
-                fetch_description=True,
+            frame, skips = scrape_all_sync(
+                query,
+                ["jobspy"],
+                {"jobspy": config},
+                timeout_per_source=_timeout(runtime),
+                deduplicate=deduplicate,
+                cache=cache,
+                circuit=circuit,
             )
-
-            if not jobs_df.empty:
-                jobs_df = jobs_df.fillna("")
-
-                for _, row in jobs_df.iterrows():
-                    raw_url = str(row.get("job_url", "")).strip()
-                    if not raw_url:
-                        continue
-
-                    raw_site = str(row.get("site", "Aggregator"))
-                    detected_platform = classify_platform(raw_url, raw_site, custom_platforms)
-
-                    plat_key = detected_platform.lower()
-                    if plat_key in platforms and not platforms[plat_key]:
-                        continue
-
-                    custom_disabled = False
-                    for cp in custom_platforms:
-                        if cp.get("name", "").lower() == plat_key and not cp.get("enabled", True):
-                            custom_disabled = True
-                            break
-                    if custom_disabled:
-                        continue
-
-                    job_title = str(row.get("title", ""))
-                    job_desc = str(row.get("description", ""))
-                    job_loc = str(row.get("location", location))
-
-                    # Hybrid detection: word-boundary match on title and location only.
-                    is_hybrid_role = bool(_HYBRID_RE.search(job_title) or _HYBRID_RE.search(job_loc))
-                    if not include_hybrid and is_hybrid_role:
-                        continue
-
-                    min_amt = row.get("min_amount") or 0
-                    max_amt = row.get("max_amount") or 0
-                    try:
-                        min_amt = float(min_amt) if min_amt else 0
-                        max_amt = float(max_amt) if max_amt else 0
-                    except (ValueError, TypeError):
-                        min_amt, max_amt = 0, 0
-
-                    if min_salary > 0 and max_amt > 0 and max_amt < min_salary:
-                        continue
-
-                    job_data = {
-                        "id": str(row.get("id", "")),
-                        "platform": detected_platform,
-                        "url": raw_url,
-                        "title": job_title,
-                        "company": str(row.get("company", "")),
-                        "location": job_loc,
-                        "job_type": str(row.get("job_type", "")),
-                        "date_posted": str(row.get("date_posted", "")),
-                        "description": job_desc,
-                        "min_amount": min_amt,
-                        "max_amount": max_amt,
-                        "currency": str(row.get("currency", "USD"))
-                    }
-                    all_jobs.append(job_data)
-        except Exception as e:
-            log.warning("Discovery failed for %r: %s", title, e)
+            frames.append(frame)
+            _record_skips(skipped, skips)
+        except Exception as exc:
+            log.warning("Discovery failed for %r: %s", title, exc)
         finally:
             if progress is not None:
                 progress(idx + 1, len(titles), f"Discovering roles: {title}")
 
-    # Deduplicate by URL
-    unique_jobs = {job["url"]: job for job in all_jobs if job.get("url")}
-    final_jobs = list(unique_jobs.values())
+    merged = pd.concat(frames, ignore_index=True) if frames else None
+    jobs = dedupe_jobs(
+        _frame_to_jobs(
+            merged,
+            location=location,
+            platforms=platforms,
+            custom_platforms=custom_platforms,
+            remote_only=remote_only,
+            include_hybrid=include_hybrid,
+            min_salary=min_salary,
+            salary_from_description=salary_from_description,
+        ),
+        enabled=deduplicate,
+    )
 
-    for job in final_jobs:
-        plat = job["platform"]
-        if plat in platform_counts:
-            platform_counts[plat] += 1
+    for job in jobs:
+        platform = job["platform"]
+        if platform in platform_counts:
+            platform_counts[platform] += 1
         elif "Aggregators" in platform_counts:
             platform_counts["Aggregators"] += 1
         else:
-            platform_counts[plat] = 1
+            platform_counts[platform] = 1
 
-    return final_jobs, platform_counts
+    return jobs, platform_counts
+
+
+# ---------------------------------------------------------------------------
+# Native ATS discovery
+# ---------------------------------------------------------------------------
 
 
 def _matches_titles(title: str, titles: List[str]) -> bool:
@@ -231,7 +561,7 @@ def _add_source_jobs(
         counts[plat] = counts.get(plat, 0) + 1
 
 
-def discover_sources(
+def _discover_sources_core(
     sources_config: Optional[Dict] = None,
     titles: Optional[List[str]] = None,
     location: str = "",
@@ -239,7 +569,7 @@ def discover_sources(
     include_hybrid: bool = True,
     min_salary: int = 0,
     platforms: Optional[Dict] = None,
-    progress: Optional[Callable[[int, int, str], None]] = None,
+    deduplicate: bool = True,
 ) -> Tuple[List[Dict], Dict[str, int]]:
     """Discover jobs from the deterministic (no-key) ATS sources.
 
@@ -313,9 +643,10 @@ def discover_sources(
 
     if builtin_cfg.get("enabled", True):
         categories = list(builtin_cfg.get("categories") or []) or load_builtin_categories()
+        detail_pages = bool(builtin_cfg.get("detail_pages", False))
         for category in categories:
             try:
-                jobs = fetch_builtin(category)
+                jobs = fetch_builtin(category, detail_pages=detail_pages)
             except Exception as e:
                 log.warning("Built In NYC source %r failed: %s", category, e)
                 continue
@@ -323,5 +654,152 @@ def discover_sources(
             if _REQUEST_DELAY:
                 time.sleep(_REQUEST_DELAY)
 
-    unique = {job["url"]: job for job in all_jobs if job.get("url")}
-    return list(unique.values()), counts
+    if deduplicate:
+        all_jobs = dedupe_jobs(all_jobs)
+    return all_jobs, counts
+
+
+def discover_sources(
+    sources_config: Optional[Dict] = None,
+    titles: Optional[List[str]] = None,
+    location: str = "",
+    remote_only: bool = False,
+    include_hybrid: bool = True,
+    min_salary: int = 0,
+    platforms: Optional[Dict] = None,
+    progress: Optional[Callable[[int, int, str], None]] = None,
+    *,
+    runtime: Optional[Dict] = None,
+    deduplicate: bool = True,
+    cache: Optional[ResultCache] = None,
+    circuit: Optional[CircuitBreaker] = None,
+    skipped: Optional[List[dict]] = None,
+    salary_from_description: bool = True,
+) -> Tuple[List[Dict], Dict[str, int]]:
+    """Run the native ATS readers through the orchestrator."""
+    platforms = platforms or {}
+    runtime = runtime or normalize_sources(
+        {"sources": sources_config or {}, "platforms": platforms}
+    )
+    if "ats" not in runtime["enabled"]:
+        return [], {}
+
+    query = {
+        "titles": list(titles or []),
+        "location": location,
+        "remote_only": remote_only,
+        "include_hybrid": include_hybrid,
+        "min_salary": min_salary,
+        "deduplicate": deduplicate,
+    }
+    cache = cache if cache is not None else build_cache(runtime)
+    circuit = circuit or build_circuit(runtime)
+    frame, skips = scrape_all_sync(
+        query,
+        ["ats"],
+        {"ats": runtime["engines"]["ats"]},
+        timeout_per_source=_timeout(runtime),
+        deduplicate=deduplicate,
+        cache=cache,
+        circuit=circuit,
+    )
+    _record_skips(skipped, skips)
+
+    jobs = dedupe_jobs(
+        _frame_to_jobs(
+            frame,
+            location=location,
+            platforms=platforms,
+            remote_only=remote_only,
+            include_hybrid=include_hybrid,
+            min_salary=min_salary,
+            salary_from_description=salary_from_description,
+        ),
+        enabled=deduplicate,
+    )
+    counts: Dict[str, int] = {}
+    for job in jobs:
+        platform = job.get("platform", "Direct")
+        counts[platform] = counts.get(platform, 0) + 1
+    return jobs, counts
+
+
+# ---------------------------------------------------------------------------
+# Optional engines
+# ---------------------------------------------------------------------------
+
+
+def discover_engines(
+    engine_names: Optional[List[str]],
+    titles: Optional[List[str]],
+    location: str = "",
+    remote_only: bool = False,
+    include_hybrid: bool = True,
+    min_salary: int = 0,
+    *,
+    runtime: Optional[Dict] = None,
+    deduplicate: bool = True,
+    cache: Optional[ResultCache] = None,
+    circuit: Optional[CircuitBreaker] = None,
+    progress: Optional[Callable[[int, int, str], None]] = None,
+    skipped: Optional[List[dict]] = None,
+    salary_from_description: bool = True,
+) -> Tuple[List[Dict], Dict[str, int]]:
+    """Run the optional engines (hirehunt, openroles, jobdrop, apify) if enabled."""
+    names = [name for name in (engine_names or []) if name in ADAPTERS]
+    if not names or runtime is None:
+        return [], {}
+
+    configs = {name: runtime["engines"].get(name, {}) for name in names}
+    cache = cache if cache is not None else build_cache(runtime)
+    circuit = circuit or build_circuit(runtime)
+    search_titles = list(titles or [])
+    frames = []
+
+    for idx, title in enumerate(search_titles or [""]):
+        query = {
+            "keywords": title,
+            "location": location,
+            "limit": 25,
+            "remote_only": remote_only,
+            "hours_old": 72,
+            "country_indeed": "usa",
+            "deduplicate": deduplicate,
+        }
+        try:
+            frame, skips = scrape_all_sync(
+                query,
+                names,
+                configs,
+                timeout_per_source=_timeout(runtime),
+                deduplicate=deduplicate,
+                cache=cache,
+                circuit=circuit,
+            )
+            frames.append(frame)
+            _record_skips(skipped, skips)
+        except Exception as exc:
+            log.warning("Engine discovery failed for %r: %s", title, exc)
+        finally:
+            if progress is not None:
+                progress(idx + 1, len(search_titles), f"Searching {', '.join(names)}: {title}")
+
+    merged = pd.concat(frames, ignore_index=True) if frames else None
+    jobs = dedupe_jobs(
+        _frame_to_jobs(
+            merged,
+            location=location,
+            titles=search_titles,
+            remote_only=remote_only,
+            include_hybrid=include_hybrid,
+            min_salary=min_salary,
+            filter_titles=True,
+            salary_from_description=salary_from_description,
+        ),
+        enabled=deduplicate,
+    )
+    counts: Dict[str, int] = {}
+    for job in jobs:
+        platform = job.get("platform", "Direct")
+        counts[platform] = counts.get(platform, 0) + 1
+    return jobs, counts

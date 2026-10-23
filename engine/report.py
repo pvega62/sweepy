@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+from io import BytesIO
 from typing import List
 from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
     HRFlowable,
     PageBreak,
@@ -192,7 +195,7 @@ def _render_card(job: dict, styles: dict) -> Table:
         Spacer(1, 0.3),
         Paragraph(f"<b>Key Requirements:</b> {requirements}", styles["ReqStyle"]),
         Spacer(1, 0.3),
-        Paragraph(f"<b>Candidate Alignment:</b> <font color=\"#0F766E\">{alignment}</font>", styles["ReqStyle"]),
+        Paragraph(f"<b>Application Tip:</b> <font color=\"#0F766E\">{alignment}</font>", styles["ReqStyle"]),
         Spacer(1, 0.3),
         Paragraph(
             f"<b>Comp &amp; Benefits:</b> <font color=\"#047857\"><b>{comp}</b></font> "
@@ -258,6 +261,25 @@ def _default_playbook(cards: List[dict], profile: dict) -> str:
     return "".join(parts)
 
 
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.S)
+
+
+def playbook_to_markup(text: str) -> str:
+    """Convert playbook prose into ReportLab paragraph markup.
+
+    The playbook arrives as prose, so ``&`` and angle brackets get escaped instead of
+    reaching ReportLab's parser, and newlines become line breaks. ``**bold**`` still
+    adds emphasis.
+    """
+    lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    markup = [_BOLD_RE.sub(r"<b>\1</b>", _xml_escape(line)).strip() for line in lines]
+    while markup and not markup[0]:
+        markup.pop(0)
+    while markup and not markup[-1]:
+        markup.pop()
+    return "<br/>".join(markup)
+
+
 def _playbook_table(playbook_html: str, styles: dict) -> Table:
     playbook_p = Paragraph(
         playbook_html,
@@ -278,26 +300,104 @@ def _playbook_table(playbook_html: str, styles: dict) -> Table:
     return table
 
 
-def _paginate(cards: List[dict], per_page: int) -> List[List[dict]]:
+def _flowable_height(flowable, width: float, measurement_canvas: Canvas) -> float:
+    _, height = flowable.wrapOn(measurement_canvas, width, 100000)
+    return height + flowable.getSpaceBefore() + flowable.getSpaceAfter()
+
+
+def _page_header(
+    page_num: int,
+    page_jobs: List[dict],
+    title_text: str,
+    meta_html: str,
+    styles: dict,
+) -> List:
+    if page_num == 1:
+        header = [
+            Paragraph(title_text, styles["DocTitle"]),
+            Spacer(1, 0.8),
+            Paragraph(meta_html, styles["MetaStyle"]),
+        ]
+    else:
+        override = next((c.get("page_theme") for c in page_jobs if c.get("page_theme")), "")
+        subtitle = f"<b>{_esc(override)}</b>" if override else _page_subtitle_html(page_jobs, page_num)
+        header = [
+            Paragraph(f"{title_text} (Cont.)", styles["DocTitle"]),
+            Spacer(1, 0.8),
+            Paragraph(subtitle, styles["MetaStyle"]),
+        ]
+    header.extend([
+        Spacer(1, 1.8),
+        HRFlowable(width="100%", thickness=1, color=BORDER, spaceBefore=0, spaceAfter=2.5),
+    ])
+    return header
+
+
+def _paginate(
+    cards: List[dict],
+    per_page: int,
+    title_text: str,
+    meta_html: str,
+    styles: dict,
+    playbook: Table,
+    page_width: float,
+    page_height: float,
+) -> List[List[dict]]:
     per_page = max(1, per_page)
-    return [cards[i:i + per_page] for i in range(0, len(cards), per_page)]
+    measurement_canvas = Canvas(BytesIO(), pagesize=letter)
+    card_blocks = [(_render_card(card, styles), Spacer(1, 2.2)) for card in cards]
+    playbook_height = _flowable_height(Spacer(1, 0.8), page_width, measurement_canvas)
+    playbook_height += _flowable_height(playbook, page_width, measurement_canvas)
+    pages = []
+    next_card = 0
+
+    while next_card < len(cards):
+        page_num = len(pages) + 1
+        page_jobs = []
+        used_height = 0.0
+
+        while next_card + len(page_jobs) < len(cards) and len(page_jobs) < per_page:
+            index = next_card + len(page_jobs)
+            candidate_jobs = page_jobs + [cards[index]]
+            header = _page_header(page_num, candidate_jobs, title_text, meta_html, styles)
+            header_height = sum(
+                _flowable_height(item, page_width, measurement_canvas)
+                for item in header
+            )
+            card, gap = card_blocks[index]
+            card_height = (
+                _flowable_height(card, page_width, measurement_canvas)
+                + _flowable_height(gap, page_width, measurement_canvas)
+            )
+            # The playbook prints once, after the final card, so only the card that
+            # completes the set reserves room for it. Reserving on every page cost
+            # card slots on each page for a box that renders on the last one.
+            reserve = playbook_height if index == len(cards) - 1 else 0.0
+            if page_jobs and header_height + used_height + card_height + reserve > page_height:
+                break
+            page_jobs.append(candidate_jobs[-1])
+            used_height += card_height
+
+        pages.append(page_jobs)
+        next_card += len(page_jobs)
+
+    return pages
 
 
 def build_report(jobs: List[dict], output_path: str, profile: dict, playbook: str = "") -> int:
     """Render the cards PDF and return the total page count."""
     report = profile.get("report", {}) or {}
-    cards_per_page = int(report.get("cards_per_page", 4) or 4)
+    cards_per_page = int(report.get("cards_per_page", 6) or 6)
     # A blank or missing max_cards falls back to 24; 0 or less means no cap.
     raw_max_cards = report.get("max_cards")
     max_cards = 24 if raw_max_cards in (None, "") else int(raw_max_cards)
 
     cards = list(jobs) if max_cards <= 0 else list(jobs)[:max_cards]
-    pages = _paginate(cards, cards_per_page)
-    total_pages = max(1, len(pages))
-
     styles = _make_styles()
     title_text = _title_text(profile)
     meta_html = _meta_html(profile, cards)
+    playbook_markup = playbook_to_markup(playbook) if playbook.strip() else ""
+    playbook_table = _playbook_table(playbook_markup or _default_playbook(cards, profile), styles)
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     temp_path = output_path + ".tmp.pdf"
@@ -305,6 +405,17 @@ def build_report(jobs: List[dict], output_path: str, profile: dict, playbook: st
         temp_path, pagesize=letter,
         leftMargin=34, rightMargin=34, topMargin=22, bottomMargin=22,
     )
+    pages = _paginate(
+        cards,
+        cards_per_page,
+        title_text,
+        meta_html,
+        styles,
+        playbook_table,
+        doc.width,
+        doc.height,
+    ) if cards else []
+    total_pages = max(1, len(pages))
 
     story = []
 
@@ -320,23 +431,12 @@ def build_report(jobs: List[dict], output_path: str, profile: dict, playbook: st
             page_num = page_idx + 1
             override = next((c.get("page_theme") for c in page_jobs if c.get("page_theme")), "")
             theme = override or _page_theme(page_jobs, page_num)
-            subtitle = f"<b>{_esc(override)}</b>" if override else _page_subtitle_html(page_jobs, page_num)
 
             for job in page_jobs:
                 job["page"] = page_num
                 job["page_theme"] = theme
 
-            if page_num == 1:
-                story.append(Paragraph(title_text, styles["DocTitle"]))
-                story.append(Spacer(1, 0.8))
-                story.append(Paragraph(meta_html, styles["MetaStyle"]))
-            else:
-                story.append(Paragraph(f"{title_text} (Cont.)", styles["DocTitle"]))
-                story.append(Spacer(1, 0.8))
-                story.append(Paragraph(subtitle, styles["MetaStyle"]))
-
-            story.append(Spacer(1, 1.8))
-            story.append(HRFlowable(width="100%", thickness=1, color=BORDER, spaceBefore=0, spaceAfter=2.5))
+            story.extend(_page_header(page_num, page_jobs, title_text, meta_html, styles))
 
             for job in page_jobs:
                 story.append(_render_card(job, styles))
@@ -344,7 +444,7 @@ def build_report(jobs: List[dict], output_path: str, profile: dict, playbook: st
 
             if page_num == total_pages:
                 story.append(Spacer(1, 0.8))
-                story.append(_playbook_table(playbook or _default_playbook(cards, profile), styles))
+                story.append(playbook_table)
             else:
                 story.append(PageBreak())
 

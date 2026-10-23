@@ -11,6 +11,7 @@ from engine.session import stable_id
 log = logging.getLogger("sweepy.engine.enrich")
 
 _DEFAULT_COLOR = "#1D4ED8"
+DEFAULT_DESCRIPTION_CHARS = 1000
 
 _REQUIREMENT_HEADINGS = (
     r"requirements",
@@ -95,6 +96,24 @@ def _strip_md(text: str) -> str:
     return text.strip()
 
 
+def _description_limit(profile: dict) -> int:
+    """Read ``export.description_chars``; zero or less keeps the whole posting."""
+    raw = (profile.get("export", {}) or {}).get(
+        "description_chars", DEFAULT_DESCRIPTION_CHARS
+    )
+    try:
+        value = int(str(raw).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return DEFAULT_DESCRIPTION_CHARS
+    return max(0, value)
+
+
+def _excerpt(text: str, limit: int) -> str:
+    if limit <= 0:
+        return _WS_RE.sub(" ", text).strip()
+    return _trim(text, limit)
+
+
 def _summary(text: str) -> str:
     if not text:
         return ""
@@ -134,17 +153,19 @@ def _fmt_amount(value: float) -> str:
     return str(int(value))
 
 
+_PERIOD_SUFFIX = {"hour": " / hour", "day": " / day", "week": " / week", "month": " / month"}
+
+
 def _comp(job: dict) -> str:
     min_amt = job.get("min_amount") or 0
     max_amt = job.get("max_amount") or 0
     currency = job.get("currency", "USD") or "USD"
     sym = "$" if currency == "USD" else currency + " "
-    if min_amt and max_amt:
-        return f"{sym}{_fmt_amount(min_amt)} - {sym}{_fmt_amount(max_amt)}"
-    if max_amt:
-        return f"{sym}{_fmt_amount(max_amt)}"
-    if min_amt:
-        return f"{sym}{_fmt_amount(min_amt)}"
+    suffix = _PERIOD_SUFFIX.get(str(job.get("salary_period") or "year").lower(), "")
+    if min_amt and max_amt and min_amt != max_amt:
+        return f"{sym}{_fmt_amount(min_amt)} - {sym}{_fmt_amount(max_amt)}{suffix}"
+    if max_amt or min_amt:
+        return f"{sym}{_fmt_amount(max_amt or min_amt)}{suffix}"
     return "Not disclosed"
 
 
@@ -175,14 +196,22 @@ def _domain(job: dict, profile: dict) -> str:
 def enrich_jobs(scored_jobs: List[dict], profile: dict) -> List[dict]:
     """Convert scored jobs into canonical card records using deterministic fallbacks."""
     tracks = get_tracks(profile)
+    description_limit = _description_limit(profile)
     cards = []
     for job in scored_jobs:
         title = str(job.get("title", "") or "")
         raw_description = job.get("description", "") or ""
         description = _strip_md(_strip_html(raw_description))
         has_extended = (job.get("badge", "Slate") == "Amber")
-        track = route_track(title, raw_description, tracks)
+        if job.get("resume_track"):
+            resume_track = job.get("resume_track")
+            resume_color = job.get("resume_color") or _DEFAULT_COLOR
+        else:
+            track = route_track(title, raw_description, tracks)
+            resume_track = track.get("name", "")
+            resume_color = track.get("color", _DEFAULT_COLOR)
         url = job.get("url", "") or ""
+        match_value = int(job.get("match_score", 0))
         cards.append({
             "id": stable_id(url),
             "rank": 0,
@@ -191,17 +220,28 @@ def enrich_jobs(scored_jobs: List[dict], profile: dict) -> List[dict]:
             "platform": str(job.get("platform", "") or ""),
             "url": url,
             "location": _location(job),
-            "match_value": int(job.get("match_score", 0)),
+            "match_value": match_value,
+            "match_score": match_value,
             "match_kind": "overlap",
-            "resume_track": str(track.get("name", "") or ""),
-            "resume_color": str(track.get("color", _DEFAULT_COLOR) or _DEFAULT_COLOR),
+            "badge": str(job.get("badge") or "Slate"),
+            "unverified": bool(job.get("unverified") or False),
+            "resume_track": str(resume_track or ""),
+            "resume_color": str(resume_color or _DEFAULT_COLOR),
             "has_extended_response": has_extended,
             "app_format": _app_format(has_extended),
             "domain": _domain(job, profile),
             "summary": _summary(description),
             "requirements": _requirements(description),
+            "description": _excerpt(description, description_limit),
             "alignment": job.get("playbook", "") or "",
+            "playbook": str(job.get("playbook", "") or ""),
             "comp": _comp(job),
+            "min_amount": job.get("min_amount") or 0,
+            "max_amount": job.get("max_amount") or 0,
+            "currency": str(job.get("currency") or "USD"),
+            "salary_period": str(job.get("salary_period") or "year"),
+            "key_matches": list(job.get("key_matches") or []),
+            "missing_skills": list(job.get("missing_skills") or []),
             "benefits": "Not disclosed",
             "page": 0,
             "page_theme": "",

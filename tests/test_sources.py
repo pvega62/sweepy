@@ -1,10 +1,14 @@
+import os
+
+import pandas as pd
 import requests
 
 import engine.discovery as discovery
+import engine.sources as sources
 import engine.sources.ashby as ashby
 from engine.sources.ashby import fetch_ashby_org
 from engine.sources.ashby import normalize as normalize_ashby
-from engine.sources.builtinnyc import parse_jobs
+from engine.sources.builtinnyc import apply_detail, parse_detail, parse_jobs
 from engine.sources.greenhouse import normalize as normalize_greenhouse
 from engine.sources.lever import normalize as normalize_lever
 from engine.sources.workable import normalize as normalize_workable
@@ -69,6 +73,18 @@ def test_ashby_fetch_404_returns_empty(monkeypatch):
     assert fetch_ashby_org("stale-org") == []
 
 
+def test_ashby_seed_orgs_are_clean_and_drop_stale_slugs():
+    path = os.path.join(sources.DATA_DIR, "ashby_orgs.txt")
+    with open(path, "r", encoding="utf-8") as f:
+        raw_lines = f.read().splitlines()
+
+    assert raw_lines[0].startswith("#")
+    tokens = [line.strip() for line in raw_lines if line.strip() and not line.strip().startswith("#")]
+    assert tokens == sources.load_ashby_orgs()
+    assert all(" " not in token for token in tokens)
+    assert not {"stripe", "google-deepmind", "braze"} & set(tokens)
+
+
 def _workable_job(**overrides):
     job = {
         "title": "UX Writer",
@@ -114,6 +130,137 @@ def test_builtin_parse_relative_job_link():
     jobs = parse_jobs(html, "https://www.builtinnyc.com")
     assert jobs[0]["url"] == "https://www.builtinnyc.com/job/technical-writer"
     assert jobs[0]["platform"] == "Built In NYC"
+
+
+_BUILTIN_CARD_HTML = """
+<div class="job-bounded-responsive bg-white p-md">
+  <div class="row">
+    <div class="col-12 col-lg-7 left-side-tile">
+      <a href="/company/sofi"><img alt="SoFi Logo"></a>
+      <a data-id="company-title" href="/company/sofi"><span>SoFi</span></a>
+      <h2><a data-id="job-card-title" href="/job/paralegal-service-process/11689049">Paralegal</a></h2>
+    </div>
+    <div class="col-12 col-lg-5 bounded-attribute-section">
+      <div class="d-flex align-items-start gap-sm">
+        <div><i class="fa-regular fa-house-building"></i></div>
+        <span class="font-barlow text-gray-04">Remote or Hybrid</span>
+      </div>
+      <div class="d-flex align-items-start gap-sm">
+        <div><i class="fa-regular fa-location-dot"></i></div>
+        <div><span class="font-barlow text-gray-04">New York, NY</span></div>
+      </div>
+      <div class="d-flex align-items-start gap-sm">
+        <div><i class="fa-regular fa-sack-dollar"></i></div>
+        <span class="font-barlow text-gray-04">99K-186K Annually</span>
+      </div>
+    </div>
+  </div>
+</div>
+"""
+
+_BUILTIN_DETAIL_HTML = """
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+  {"@type":"BreadcrumbList","itemListElement":[]},
+  {"@type":"JobPosting","title":"Paralegal","description":"<p>Write filings.</p><ul><li>Westlaw</li></ul>",
+   "datePosted":"2026-10-19","employmentType":"FULL_TIME","jobLocationType":"TELECOMMUTE",
+   "hiringOrganization":{"@type":"Organization","name":"SoFi"},
+   "jobLocation":{"@type":"Place","address":{"addressLocality":"New York","addressRegion":"NY"}},
+   "baseSalary":{"@type":"MonetaryAmount","currency":"USD",
+     "value":{"@type":"QuantitativeValue","minValue":99000,"maxValue":186000,"unitText":"YEAR"}}}
+]}
+</script>
+"""
+
+
+def test_builtin_parse_reads_company_location_and_salary():
+    job = parse_jobs(_BUILTIN_CARD_HTML)[0]
+    assert job["company"] == "SoFi"
+    assert job["location"] == "New York, NY"
+    assert job["workplace_type"] == "Remote or Hybrid"
+    assert job["remote"] is True
+    assert job["min_amount"] == 99000
+    assert job["max_amount"] == 186000
+    assert job["salary_period"] == "year"
+
+
+def test_builtin_detail_reads_job_posting_json_ld():
+    posting = parse_detail(_BUILTIN_DETAIL_HTML)
+    assert posting["title"] == "Paralegal"
+
+
+def test_builtin_apply_detail_fills_a_listing_job():
+    job = parse_jobs(_BUILTIN_CARD_HTML)[0]
+    enriched = apply_detail(job, _BUILTIN_DETAIL_HTML)
+    assert "Write filings." in enriched["description"]
+    assert "Westlaw" in enriched["description"]
+    assert "<p>" not in enriched["description"]
+    assert enriched["company"] == "SoFi"
+    assert enriched["location"] == "New York, NY"
+    assert enriched["min_amount"] == 99000
+    assert enriched["max_amount"] == 186000
+    assert enriched["job_type"] == "FULL_TIME"
+    assert enriched["date_posted"] == "2026-10-19"
+
+
+def test_builtin_apply_detail_keeps_listing_values():
+    job = parse_jobs(_BUILTIN_CARD_HTML)[0]
+    job["company"] = "Listing Co"
+    job["location"] = "Jersey City, NJ"
+    job["min_amount"] = 50000
+    enriched = apply_detail(job, _BUILTIN_DETAIL_HTML)
+    assert enriched["company"] == "Listing Co"
+    assert enriched["location"] == "Jersey City, NJ"
+    assert enriched["min_amount"] == 50000
+    assert "Write filings." in enriched["description"]
+
+
+def test_builtin_relative_links_resolve_to_the_site_root():
+    html = '<div><a href="/job/technical-writer/123">Technical Writer</a></div>'
+    jobs = parse_jobs(html, "https://www.builtinnyc.com/jobs/legal/search/paralegal")
+    assert jobs[0]["url"] == "https://www.builtinnyc.com/job/technical-writer/123"
+
+
+def test_builtin_apply_detail_handles_a_location_list():
+    html = (
+        '<script type="application/ld+json">{"@type":"JobPosting","jobLocation":'
+        '[{"@type":"Place","address":{"addressLocality":"Newark","addressRegion":"NJ"}}]}</script>'
+    )
+    assert apply_detail({}, html)["location"] == "Newark, NJ"
+
+
+def test_builtin_fetch_stops_detail_requests_after_a_block(monkeypatch):
+    import engine.sources.builtinnyc as builtin
+
+    listing = "".join(
+        f'<a href="https://www.builtinnyc.com/job/paralegal-{n}/10{n}">Paralegal {n}</a>'
+        for n in range(1, 4)
+    )
+    detail_calls = []
+
+    class _Response:
+        def __init__(self, status, text):
+            self.status_code = status
+            self.text = text
+            self.headers = {}
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, headers=None, timeout=None):
+        if url.endswith("/jobs/legal"):
+            return _Response(200, listing)
+        detail_calls.append(url)
+        return _Response(429, "Just a moment...")
+
+    monkeypatch.setattr(builtin, "_DETAIL_DELAY", 0)
+    monkeypatch.setattr(builtin.requests, "get", fake_get)
+
+    jobs = builtin.fetch_builtin("jobs/legal", detail_pages=True)
+
+    assert len(jobs) == 3
+    assert len(detail_calls) <= 2
+    assert jobs[0]["company"] == ""
 
 
 def test_discover_sources_merges_and_dedupes(monkeypatch):
@@ -383,6 +530,71 @@ def test_builtin_source_ignores_platforms_key(monkeypatch):
     monkeypatch.setattr(discovery, "_REQUEST_DELAY", 0)
     _patch_seed_loaders(monkeypatch, load_builtin_categories=["jobs/legal"])
     calls = []
-    monkeypatch.setattr(discovery, "fetch_builtin", lambda category: calls.append(category) or [])
+    monkeypatch.setattr(
+        discovery,
+        "fetch_builtin",
+        lambda category, **kwargs: calls.append(category) or [],
+    )
     discovery.discover_sources({}, titles=["writer"], platforms={"builtinnyc": False})
     assert calls == ["jobs/legal"]
+
+
+def _pay_frame(description: str, **overrides) -> pd.DataFrame:
+    row = {
+        "title": "Technical Writer",
+        "company": "Acme",
+        "location": "New York, NY",
+        "url": "https://example.com/jobs/1",
+        "description": description,
+        "salary_min": 0,
+        "salary_max": 0,
+    }
+    row.update(overrides)
+    return pd.DataFrame([row])
+
+
+def test_frame_to_jobs_reads_pay_from_description():
+    jobs = discovery._frame_to_jobs(
+        _pay_frame("Base salary: $90,000 - $110,000 per year."), location="New York, NY"
+    )
+    assert jobs[0]["min_amount"] == 90000.0
+    assert jobs[0]["max_amount"] == 110000.0
+    assert jobs[0]["currency"] == "USD"
+    assert jobs[0]["salary_period"] == "year"
+
+
+def test_frame_to_jobs_keeps_structured_pay_over_description():
+    frame = _pay_frame("Pay: $20 - $25 per hour.", salary_min=100000, salary_max=120000)
+    jobs = discovery._frame_to_jobs(frame, location="New York, NY")
+    assert jobs[0]["min_amount"] == 100000.0
+    assert jobs[0]["max_amount"] == 120000.0
+    assert jobs[0]["salary_period"] == "year"
+
+
+def test_frame_to_jobs_can_skip_description_pay():
+    jobs = discovery._frame_to_jobs(
+        _pay_frame("Base salary: $90,000 - $110,000 per year."),
+        location="New York, NY",
+        salary_from_description=False,
+    )
+    assert jobs[0]["min_amount"] == 0
+    assert jobs[0]["max_amount"] == 0
+
+
+def test_frame_to_jobs_maps_aggregator_interval():
+    frame = _pay_frame("", salary_min=45, salary_max=55, interval="hourly")
+    jobs = discovery._frame_to_jobs(frame, location="Remote", min_salary=65000)
+    assert jobs[0]["salary_period"] == "hour"
+    assert [job["title"] for job in jobs] == ["Technical Writer"]
+
+
+def test_frame_to_jobs_filters_hourly_pay_by_annual_floor():
+    kept = discovery._frame_to_jobs(
+        _pay_frame("Hourly rate: $45 - $55 per hour."), location="Remote", min_salary=65000
+    )
+    dropped = discovery._frame_to_jobs(
+        _pay_frame("Hourly rate: $20 - $25 per hour."), location="Remote", min_salary=65000
+    )
+    assert [job["title"] for job in kept] == ["Technical Writer"]
+    assert dropped == []
+

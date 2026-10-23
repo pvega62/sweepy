@@ -1,495 +1,352 @@
 # Sweepy
 
-**Sweepy** is a free Python automation tool. It aggregates, de-duplicates, and scores job postings across ATS (Applicant Tracking System) platforms and job boards. It parses your PDF résumé to score matches and generates structured datasets with a curated, card-per-page PDF report.
+[![M8ven Score](https://m8ven.ai/badge/mcp/pvega62-sweepy-07ewva?v=a2ea0bac35a4ed6e7512771f55ab2271)](https://m8ven.ai/mcp/pvega62-sweepy-07ewva?s=readme)
 
-Sweepy works **with or without a Large Language Model (LLM)**. Without an LLM key it produces a fully deterministic report. The report includes keyword-overlap scores, automatic resume-track routing, and extracted summaries. It labels them as `NN% KEYWORD OVERLAP`. Connect your own LLM client through the Model Context Protocol (MCP) to supply richer judgment, and Sweepy re-labels those cards `NN% MATCH`.
+Sweepy is a free tool that searches job boards and scores each posting against your resume. It reads company career sites and job boards, drops duplicate and expired listings, then writes a ranked report. You can turn off duplicate checking for one sweep without changing your profile. The setup wizard opens a launchpad for searches, profile setup, search tuning, and Sweepy's Toolbox tasks such as engine and aggregator management.
 
-In short, a friendly tool that **sweeps** the internet for job postings and scores them against your résumé.
+See [CHANGELOG.md](CHANGELOG.md) for the current version and release history.
 
-## Table of contents
-- [Features and architecture](#features-and-architecture)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Dependencies](#dependencies)
-- [Command-line usage](#command-line-usage)
-- [Resume formatting tips](#resume-formatting-tips)
-- [Configuration schema](#configuration-schema)
-- [Customizing sources for your field](#customizing-sources-for-your-field)
-- [Default sources and how they run](#default-sources-and-how-they-run)
-- [Custom platforms and caveats](#custom-platforms-and-caveats)
-- [Model context protocol (MCP) integration](#model-context-protocol-mcp-integration)
-- [Sample report](#sample-report)
-- [Legal and responsible use](#legal-and-responsible-use)
-- [Module reference](#module-reference)
-- [License](#license)
+## Features
 
-## Features and architecture
-- **Multi-platform scraping.** Uses `python-jobspy` to extract postings from LinkedIn, Indeed, Glassdoor, and ZipRecruiter without API keys.
-- **Deterministic ATS sources.** Fetches Greenhouse and Lever job boards, Ashby and Workable accounts, and Built In NYC listings directly without a key. It normalizes them into one schema.
-- **ATS discovery and classification.** Inspects URLs to classify direct ATS endpoints, such as Greenhouse, Ashby, Lever, or Workable, versus aggregator feeds.
-- **Dynamic scoring.** Extracts text from your PDF résumé, computes a weighted overlap against the job description using `must_have_skills`, and identifies `missing_skills`.
-- **Dual resume routing.** Routes each job to the best of N named resume tracks by keyword overlap. The route renders as a color-coded `SUBMIT: ...` badge.
-- **Application playbooks.** Each scored role includes a short `playbook` string. It lists the résumé keywords to highlight in a cover letter, or falls back to a generic tailoring tip when nothing matches.
-- **Heuristic tagging.** Uses regex pattern matching to flag postings requiring extended written responses, such as "cover letter" or "assessment," versus standard quick applies.
-- **Link validation.** Executes an HTTP `HEAD` request per link, falling back to `GET`. It prunes expired links and detects platform-specific soft 404 redirects, such as an Ashby blank state.
-- **Reporting.** Generates an atomic, styled card PDF (the default) plus prioritized `.csv` and `.json` data dumps. The legacy table layout remains available via `report.style: legacy`.
+- **Searches many places at once.** Collects postings from Greenhouse, Ashby, Lever, Workable, Built In New York City, LinkedIn, Indeed, Glassdoor, and ZipRecruiter. Each of these sources works without an API key.
+- **Runs every engine in parallel.** Enabled engines start together. A sweep then takes about as long as the slowest engine rather than the sum of them.
+- **Keeps going when a board fails.** Each engine gets a timeout and a circuit breaker. One failing endpoint can't stall the run or repeat the same request five times.
+- **Adds more engines on demand.** Install HireHunt, openroles, jobdrop, or Apify from the wizard without leaving the terminal.
+- **Scores every posting against your resume.** Reads the text of your PDF or Word resume and measures how much of it matches the posting.
+- **Filters out expired links.** Checks each URL and removes the postings that no longer exist.
+- **Checks for duplicate postings across boards.** Matches normalized job title, company, and location, even when boards use different URLs. Pass `--no-dedupe` to keep every board's listing for one run.
+- **Skips postings you already saw.** A daily sweep reports new roles instead of yesterday's list. Sweepy suppresses reported postings for a four-day window. Pass `--include-seen` to bring them back for one run.
+- **Routes you to the right resume.** Sends each job to the resume track you wrote for that role, then labels the card with a color badge.
+- **Builds a report you can use.** Produces a card-per-page PDF with clickable links, plus CSV and JSON files for your own tracking.
+- **Turns the CSV into an application tracker.** The CSV ends with `date_applied`, `status`, `interview_stage`, `offer_amount`, `offer_date`, `follow_up_date`, `contact`, and `notes`. Fill them in through Excel, Google Sheets, or Notion. Sweepy copies your entries into later sweeps of the same profile. The PDF gives you one ranked reading list with apply links on each card. The spreadsheet keeps roles past the PDF card limit and records what you did about each one. Turn the columns off with `export.tracking: false`.
 
-## Prerequisites
-- **Python 3.10+**. CI tests 3.10, 3.11, and 3.12.
-- **Note for Python 3.13 users:** the `pymupdf` package may require source compilation when pre-built wheels are unavailable. Install the Microsoft C++ Build Tools and select the "Desktop development with C++" workload before you install dependencies.
+## Quick start
 
-## Installation
-
-Clone the repository and install dependencies:
+You need **Python 3.10 or newer**. On Python 3.13, some packages build from source. You may need the Microsoft C++ Build Tools first. See [Installation](https://pvega62.github.io/software/docs/sweepy/installation).
 
 ```bash
 git clone https://github.com/pvega62/sweepy.git
 cd sweepy
-pip install -r requirements.txt
+pip install -e .
+sweepy
 ```
 
-Verify your installation:
-```bash
-python swee.py --version
-```
+`pip install -e .` installs every core dependency and registers the `sweepy` command in your Python Scripts folder. Reopen your terminal once so your shell picks up that folder from PATH. Run `sweepy` to start the wizard, or add a command option such as `sweepy --run`. You can also run the script directly with `python swee.py`.
 
-## Dependencies
-- **pymupdf**: reads and extracts text from your résumé PDF and rasterizes the PNG report exports.
-- **python-docx**: reads `.docx` text so Sweepy can rebuild it as a PDF without Word.
-- **python-jobspy**: scrapes job boards securely without requiring an API key.
-- **beautifulsoup4**: parses HTML for the Greenhouse, Lever, Workable, and Built In NYC sources.
-- **reportlab**: generates the styled PDF report with clickable links.
-- **requests**: sends web requests to check if URLs are still active.
-- **pandas**: handles tabular processing for the CSV and JSON exports.
-- **pyyaml & questionary**: handle the interactive configuration wizard.
-- **mcp** and **anyio**: power the optional MCP server for AI assistant integration.
+That one command gives you the two built-in engines. The wizard offers the four optional engines when you need them, and you never run a separate requirements file.
 
-## Command-line usage
-
-### 1. Interactive setup wizard
-Use the built-in questionary command-line tool to generate a YAML configuration profile:
-```bash
-python swee.py --setup
-```
-
-### 2. Execution pipeline
-Run Sweepy by passing a configuration profile. The engine executes a 5-stage pipeline:
-1. **Profile loading.** Parses YAML and validates constraints.
-2. **Discovery.** Executes scrapers across configured ATS platforms and aggregates postings.
-3. **Validation.** Prunes dead links and parses soft 404 redirects.
-4. **Scoring.** Parses the provided résumé PDF, calculates keyword overlap, and generates custom application playbooks.
-5. **Generation.** Builds the date-stamped PDF, CSV, and JSON payloads, plus PNG page images when `png` is in the export format.
+To pull every compatible engine up front instead, add one flag to the same command:
 
 ```bash
-python swee.py --profile profiles/your_custom_profile.yaml
+pip install -e ".[all-engines]"
 ```
 
-### 3. Convert a DOCX to PDF
-Convert a Word document (such as a résumé kept as `.docx`) to PDF:
+That adds HireHunt, openroles, and Apify in one resolution. `jobdrop` stays out because its metadata can't resolve next to JobSpy. Install it with `sweepy --install-engines jobdrop --allow-engine-conflicts` when you want its 33 boards. The [Job engines](#job-engines) section covers both paths.
+
+Running `sweepy` opens the wizard's tile-based launchpad. Use the arrow keys to move between **Launch Sweep**, **Build Profile**, **Load Profile**, **Sweep Settings**, **Sweepy's Toolbox**, and **Exit Sweepy**, then press Enter. Tile subtitles state the action in plain words, as in **Run your job search now** or **Open a search you saved**. **Load Profile** lets you choose a saved profile to use for the next sweep. The toolbox contains profile editing, engine management, debug logging, help, recent logs, document conversion, and updates. **Build Profile** collects your name, target job titles, location, and resume path. The wizard saves the profile when you finish. Run `sweepy --setup --profile profiles/your_profile.yaml` to edit a profile directly.
+
+Submenus open with **← Back**, which returns to the menu that opened them. Esc does the same. At a question, Esc reopens the previous answer. Inside a submenu, Esc steps up one level. At the launchpad, Esc exits. Ctrl+C quits from anywhere.
+
+To pull new code when a version releases, run:
 
 ```bash
-python swee.py --docx path/to/resume.docx
+sweepy --update
 ```
 
-Sweepy prompts for an output path. Leave it blank to save the PDF next to the DOCX
-with the same base name. The converter first rebuilds the PDF from the DOCX text with
-`python-docx` and `reportlab`. If Microsoft Word is available, it falls back to
-`docx2pdf` for a pixel-faithful render.
+Sweepy checks your Git remote, fast-forwards the checkout, and reinstalls `requirements.txt` along with any optional engines you already installed. It refuses to change a checkout with uncommitted changes. Prefer `sweepy --check-update` to check for a new version without changing anything.
 
-### 4. Debug logging
-Add `--debug` to write a rotating debug log under `logs/` in the application
-directory:
+Then run your first sweep:
 
 ```bash
-python swee.py --debug --profile profiles/your_profile.yaml
+sweepy --run
 ```
 
-Set `debug: true` in a profile or export `SWEEPY_DEBUG=1` to enable it without the
-flag. Pass `--log-dir DIR` to move the log elsewhere, and run `python swee.py --logs`
-to print the most recent entries.
+`--run` sweeps with the last profile you saved. To name a different profile, use `sweepy --profile profiles/your_profile.yaml`.
 
-## Resume formatting tips
+Turn off duplicate checking for one run without editing a profile setting:
 
-Sweepy reads the PDF at `resume.path` and extracts its text. Clean, extractable text produces accurate match scores. The formatting that works for applicant tracking systems (ATS) also works for Sweepy.
-
-### What Sweepy can't read
-
-- **Non-PDF files.** Point `resume.path` at a PDF. The MCP `create_profile` tool rejects any other extension. Convert a `.docx` résumé first with `python swee.py --docx`.
-- **Scanned pages with no text layer.** Sweepy reads the text layer, not the page image. A scan or a photo of a résumé has no text layer, so scoring uses only `must_have_skills`. If that list is empty too, every role scores 75%.
-- **Password-protected PDFs.** Sweepy can't open encrypted files.
-- **Missing or corrupt files.** A bad path logs a warning and skips the extraction step. Only `must_have_skills` drives the score then.
-
-> [!TIP]
-> Run OCR on a scan first. It adds a text layer Sweepy can read.
-
-### Formatting that breaks a sweep
-
-- **Two or more columns.** Extractors read in order across the page, so columns interleave and scramble the text. ATS parsers often do the same.
-- **Tables, text boxes, and sidebars.** Sweepy can read these out of order or merge them with neighbors.
-- **Images, icons, and charts.** Extraction skips anything drawn as an image, and ATS parsers typically ignore it too.
-- **Headers and footers.** Many parsers skip this region. Keep your name and contact details in the body.
-- **Hyphenated line breaks.** A term split across lines (`e-` on one line, `discovery` on the next) breaks the whole-word keyword match.
-- **Ligatures and decorative fonts.** `fi` and `fl` ligatures and unusual glyphs can extract as garbage.
-- **Emoji and custom bullet glyphs.** These often drop or garble. Use a plain hyphen or a round bullet.
-
-> [!TIP]
-> Run the copy-paste test. Open the PDF, select all, and paste into a plain text editor. If the paste looks scrambled or empty, Sweepy sees the same.
-
-### What applicant tracking systems prefer
-
-Applicant tracking systems parse hundreds of résumés with the same kind of extraction Sweepy uses. Give them one clean text column.
-
-- **One column, top to bottom.** Skip the two-column design with a sidebar.
-- **Plain section headings.** Use `Experience`, `Education`, and `Skills`. Avoid tables and icons in headings.
-- **Real text only.** No image-based headings, logos, or skill bars.
-- **Standard fonts.** Arial, Calibri, Helvetica, or Times New Roman at 10-12pt.
-- **Plain bullets and consistent dates.** Use one date format throughout, such as `Jan 2024 – Present`.
-- **Reverse-chronological order.** Most recruiters and parsers expect it.
-- **Contact info in the body.** ATS parsers often strip headers and footers.
-- **Export from your word processor.** Save a PDF from your editor, and keep the `.docx` in case a portal requires it.
-- **Mirror the job's wording.** If a posting says `e-discovery` or `docs-as-code`, use that exact term so keyword matching catches it.
-
-### Keywords come from `must_have_skills`
-
-Sweepy scores a role by counting how many of your keywords appear in the posting. The keyword list combines your profile's `must_have_skills` with a short built-in list of common tech and legal terms that Sweepy looks for in the résumé text.
-
-The built-in list is small and generic, so most résumé terms never count on their own.
-
-> [!TIP]
-> Treat `must_have_skills` as your real keyword list. Pull terms from your résumé and from your industry, because Sweepy's built-in list is small and generic.
-
-Add these to it:
-
-- Every skill, tool, and platform you name in your résumé, such as `API Documentation`, `OpenAPI`, `Docusaurus`, `Figma`, or `Westlaw`.
-- Terms your industry and target roles use, even when your résumé words them differently, such as `docs-as-code`, `e-discovery`, `content design`, or `prompt engineering`.
-- Exact phrases from the postings you want. Sweepy matches whole words, so copy the posting's wording when it matters.
-
-Keep these rules in mind:
-
-- Matching ignores case and matches whole words. `e-discovery` doesn't match a posting that writes `ediscovery`, so add both spellings.
-- Each keyword counts in the denominator. A long list lowers the score for roles that miss most of it, so keep the list to terms you have.
-- `tracks[].route_keywords` is separate. It picks which résumé to send, and it never affects the match score.
-
-```yaml
-resume:
-  path: "C:/path/to/your/resume.pdf"
-  must_have_skills:
-    - "API Documentation"
-    - "OpenAPI"
-    - "docs-as-code"
-    - "Docusaurus"
-    - "Content Design"
-    - "Prompt Engineering"
+```bash
+sweepy --run --no-dedupe
+sweepy --profile profiles/your_profile.yaml --no-dedupe
 ```
 
-## Configuration schema
+By default, Sweepy keeps one posting when different boards list the same normalized title, company, and location. The MCP `run_sweep` tool accepts `deduplicate=false` for the same per-run override.
 
-You define profiles in YAML format and store them in the `profiles/` directory. Open a profile in any plain-text editor. Notepad works. VS Code or another IDE adds YAML syntax highlighting and validation if you want it. Indent with spaces, not tabs. YAML rejects tabs.
+Sweepy also hides postings from earlier sweeps. Review them again or start over:
 
-```yaml
-name: "Alex Rivera"
-debug: false          # Set true to write debug logs under logs/
-
-search:
-  titles:
-    - "Paralegal"
-    - "Legal Assistant"
-  location: "New York, NY"
-  remote_only: false
-  include_hybrid: true   # Set to false to exclude hybrid positions
-  min_salary: 65000
-
-resume:
-  path: "C:/absolute/path/to/resume.pdf"
-  must_have_skills:
-    - "Westlaw"
-    - "LexisNexis"
-    - "Contract Review"
-  keywords_weight: 1.5
-  # Optional dual-targeting: route each job to the best track by keyword overlap.
-  tracks:
-    - name: "Tech Writer Resume"
-      path: "C:/path/to/tech_writer.pdf"
-      color: "#1D4ED8"
-      route_keywords: ["api", "docs-as-code", "developer"]
-    - name: "UX Writer Resume"
-      path: "C:/path/to/ux_writer.pdf"
-      color: "#7E22CE"
-      route_keywords: ["ux", "content design", "microcopy"]
-
-platforms:
-  greenhouse: true
-  ashby: true
-  lever: true
-  workable: true
-  aggregators: false
-  # Custom platforms or ATS domains:
-  custom:
-    - name: "SmartRecruiters"
-      domain: "smartrecruiters.com"
-      enabled: true
-    - name: "Breezy HR"
-      domain: "breezy.hr"
-      enabled: true
-
-# Deterministic (no-key) sources. Empty lists fall back to data/sources/*.txt seeds.
-# Each source also honors its platforms.<x> flag (see "Default sources and how they run").
-sources:
-  jobspy:
-    linkedin: true
-    indeed: true
-    glassdoor: true
-    zip_recruiter: true
-  greenhouse:
-    enabled: true
-    boards: []          # e.g. ["databricks", "gitlab", "cloudflare", "robinhood"]
-  ashby:
-    enabled: true
-    orgs: []            # e.g. ["modal", "camunda"]
-  lever:
-    enabled: true
-    companies: []       # e.g. ["leverdemo", "spotify"]
-  workable:
-    enabled: true
-    slugs: []           # e.g. ["soda-data-nv", "reversinglabs"]
-  builtinnyc:
-    enabled: true
-    categories: []      # e.g. ["jobs/technical-writer"]
-
-report:
-  style: "cards"        # "cards" (default) | "legacy"
-  cards_per_page: 4
-  max_cards: 24         # 0 or less = unlimited
-  destinations: []      # extra directories to copy the PDF into
-
-export:
-  format: "pdf,csv,json" # add "png" to also export page images
-  output_dir: "results"
+```bash
+sweepy --run --include-seen      # report earlier postings too
+sweepy --run --reset-history     # forget them, then sweep
+sweepy --reset-history           # forget the last profile's history and exit
 ```
 
-## Customizing sources for your field
+Build or update a profile without prompts when you script Sweepy:
 
-Sweepy uses seed files in `data/sources/` as fallbacks when your profile leaves source lists empty. To target a specific field, add the relevant ATS boards, orgs, companies, slugs, and categories directly in your profile's `sources` section.
+```bash
+sweepy --setup --non-interactive \
+  --name "Alex Rivera" \
+  --titles "Technical Writer,UX Writer" \
+  --location "New York, NY" \
+  --resume C:/resumes/alex.pdf \
+  --sources jobspy,openroles \
+  --openroles-companies figma,stripe,notion \
+  --timeout 120 --no-cache
+```
 
-### Legal (example in `profiles/paralegal_nyc.yaml`)
+Sweepy validates the enabled engines before it writes the file. A missing required field fails fast with the reason. In the interactive wizard, leave OpenRoles company slugs blank to skip that engine. OpenRoles only searches named company boards. Non-interactive profiles that enable OpenRoles still need `--openroles-companies`. Non-interactive flags cover `--sources`, `--jobspy-sites`, `--hirehunt-sources`, `--jobdrop-sites`, `--openroles-companies`, `--apify-actor`, `--timeout`, `--cache-ttl`, `--no-cache`, `--history-days`, `--no-history`, and `--job-tracking` / `--no-job-tracking`.
+
+Fill in a profile file when you prefer an editor to prompts and tool calls:
+
+```bash
+cp profiles/template_custom.yaml profiles/my_search.yaml
+# replace the four REQUIRED values, then run the copy
+sweepy --profile profiles/my_search.yaml
+```
+
+The template documents every setting with its default. Sweepy prints your name, titles, and location before discovery starts. A typo shows up on the first output line.
+
+Convert a resume or notes file to PDF without opening the wizard:
+
+```bash
+sweepy --convert path/to/resume.docx
+```
+
+`--convert` accepts `.docx`, `.doc`, `.txt`, `.md`, and `.pdf` files. It writes the PDF beside the original file and prints the final path.
+
+A sweep takes 30 to 90 seconds. Sweepy prints its progress as it works:
+
+1. **Loads your profile.**
+2. **Discovers openings** across the platforms you turned on.
+3. **Validates links** and drops the expired ones.
+4. **Scores each role** against your resume.
+5. **Writes your report.**
+
+## What you get
+
+Every run writes date-stamped files to the `results/` folder. Earlier reports stay in place.
+
+- **A PDF report.** One card per role, sorted by match score, with pay, benefits, and a link to apply.
+- **A CSV file.** Every card field, a 1,000-character posting excerpt, and eight job-tracking columns that Sweepy copies into later sweeps. Open it in Excel, Google Sheets, or Notion.
+- **A JSON file.** The same data in a format other tools can read.
+
+Open the [sample PDF](docs/sample_report.pdf), or view [page 1 as an image](docs/sample_report.png).
+
+## Job engines
+
+Sweepy includes two engines and can download four more. Every engine runs behind the same adapter. Profiles look the same no matter which one found the posting.
+
+| Engine | Availability | What it scrapes | Proxies | User-Agent | Descriptions |
+|---|---|---|---|---|---|
+| `jobspy` | Built in | LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, BDJobs | Yes | Yes | Toggle |
+| `ats` | Built in | Greenhouse, Ashby, Lever, Workable, Built In NYC | No | No | Always |
+| `hirehunt` | Download | LinkedIn, Indeed, Naukri, Shine, Internshala, Unstop, and six company boards (Google Careers, Amazon, Meta, Apple, Netflix, Microsoft) | No | No | Always |
+| `openroles` | Download | Greenhouse, Lever, Ashby, Workday boards you name | No | No | Always |
+| `jobdrop` | Download | 33 boards including Google, Wellfound, Workday, iCIMS, Dice, USAJobs | Yes | Yes | Toggle |
+| `apify` | Download | Managed actors, LinkedIn by default | Handled by actor | Handled by actor | Actor-dependent |
+
+`jobdrop` reports a metadata conflict with JobSpy: it pins `curl-cffi<0.8`, while JobSpy requires `curl_cffi>=0.16.2`. The pin is stale. `jobdrop` runs fine on the newer library, which still includes every impersonation profile it uses (`safari17_2_ios`, `chrome120`, `chrome124`).
+
+A plain `pip install` of both still fails. `--install-engines all` leaves `jobdrop` out. Add `--allow-engine-conflicts` to install it the supported way. Sweepy installs `jobdrop` with `--no-deps`, then resolves its other requirements, so `curl_cffi` stays at JobSpy's version and both engines run.
+
+```bash
+sweepy --install-engines all
+sweepy --install-engines openroles,apify
+sweepy --install-engines jobdrop --allow-engine-conflicts
+```
+
+`pip check` still reports `jobdrop`'s stale upper bound after that install. The warning describes the metadata, not the running code.
+
+Or open the wizard and choose **Sweepy's Toolbox** then **Download job engines**. That screen lists each engine's boards and install state. It asks before it runs `pip`. Pick a missing engine while building a profile and the wizard offers the same download. Sweepy never runs an install without your confirmation.
+
+### Disk footprint
+
+Measured on Windows with Python 3.13:
+
+| Install | Packages on disk | Notes |
+|---|---|---|
+| Core (`requirements.txt`) | 290 MB | 53 packages, including pandas, pymupdf, and the MCP SDK |
+| `hirehunt` | +12 MB | Adds rich and markdown-it-py |
+| `openroles` | +0.3 MB | Python standard library only |
+| `apify-client` | +17 MB | Adds impit, pydantic extras, and dnspython |
+| `jobdrop` | +406 MB | Led by scipy (134 MB), playwright (113 MB), tls-client (93 MB), and selenium (34 MB) |
+
+A full install of the compatible engines takes about **320 MB**. Forcing `jobdrop` in as well brings the package total to about **725 MB**, before it downloads a browser.
+
+Browser binaries live outside the Python environment and arrive on first use:
+
+- Playwright's Chromium build is about **710 MB** (Chromium plus its headless shell).
+- A full Playwright set, including Firefox and WebKit, runs about **1.2 GB**.
+- Camoufox, which `jobdrop` uses for its stealth path, downloads a patched Firefox on first launch.
+
+Sweepy runs every built-in engine without a browser. The core install needs none of that space.
+
+List engines and their install state at any time:
+
+```bash
+sweepy --list-engines
+```
+
+`openroles` reads boards you name and requires company slugs. `apify` reads an `APIFY_TOKEN` environment variable and bills against your Apify account.
+
+Installing an engine doesn't switch it on. Add it to a profile in one of three ways:
+
+1. **Wizard.** Run `sweepy`, choose **Sweepy's Toolbox**, then **Manage job engines**, then **Choose engines and settings**. Installed engines show an `[installed]` tag. Tick one and the wizard prompts for its settings.
+2. **Profile edit.** Load the profile, then pick **Manage job engines** from the review screen.
+3. **Command line.** Name the engine in `--sources` and supply its settings:
+
+```bash
+sweepy --setup --non-interactive --profile profiles/your_profile.yaml \
+  --sources jobspy,ats,jobdrop --jobdrop-sites linkedin,indeed,wellfound
+```
+
+Each route validates the engine's settings before it writes the file. A missing value, such as `openroles` company slugs, fails with the reason instead of saving a broken profile.
+
+### Choosing boards
+
+The profile wizard's platform step lists every board Sweepy can search, grouped under the engine that reads it. All 63 boards appear in one place instead of only the built-in five.
+
+| Group | Boards | Tag |
+|---|---|---|
+| `jobspy` (8) | LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, BDJobs | `built in` |
+| `ats` (5) | Greenhouse, Ashby, Lever, Workable, Built In NYC | `built in` |
+| `hirehunt` (12) | LinkedIn, Indeed, Naukri, Shine, Internshala, Unstop, Google Careers, Amazon, Meta, Apple, Netflix, Microsoft | `needs download` until installed |
+| `openroles` (4) | Greenhouse, Lever, Ashby, Workday | `needs download`, and needs company slugs |
+| `jobdrop` (33) | Google, Wellfound, Workday, iCIMS, Dice, USAJobs, Handshake, and more | `needs download`, and conflicts with JobSpy |
+| `apify` (1) | LinkedIn through an Apify actor | `needs download`, and needs an `APIFY_TOKEN` |
+
+Each row shows its engine and install state, such as `Indeed  [jobspy · built in]` or `Wellfound  [jobdrop · needs download]`. You see the tag before you commit to the choice. Tick a board from an engine with no local install and the wizard prints the command that installs it. An installed engine shows `installed` instead. Reopening a saved profile shows its current boards already ticked. Sweepy keeps a board from an uninstalled engine in the profile, and the sweep skips that engine with a warning until the install finishes.
+
+### Engine settings
+
 ```yaml
 sources:
-  ashby:
-    orgs:
-      - "crosby"
-      - "normlaw"
-      - "hargrove-firm"
-      - "lawhive"
-  workable:
-    slugs:
-      - "shegerianand-associates-1"
-      - "harper-james"
-      - "legalvision"
-  builtinnyc:
-    enabled: true
-    categories:
-      - "jobs/legal"
-      - "jobs/legal/search/paralegal"
+  enabled: [jobspy, ats, openroles]
+  openroles:
+    ats: [greenhouse, lever, ashby, workday]
+    companies: [figma, stripe, notion]
+  jobdrop:
+    sites: [linkedin, indeed, google, glassdoor]
+    headless: true
+    fetch_descriptions: true
+    proxies: ["user:pass@host:port"]
+cache:
+  enabled: true
+  ttl_seconds: 3600
+history:
+  enabled: true
+  retention_days: 4
+  match: url+role
+  path: null
+orchestrator:
+  timeout_per_source_seconds: 180
+  circuit_breaker:
+    failure_threshold: 5
+    cooldown_seconds: 30
 ```
 
-### Technical writing
+Older profiles keep working. The board booleans under `sources.jobspy` still turn individual JobSpy boards on and off. Any profile without a `sources.enabled` list defaults to JobSpy plus the built-in ATS readers.
+
+- **Descriptions stay on by default.** Scoring matches posting text against your resume. Turn `fetch_descriptions` off only if you accept weaker matches for a faster sweep.
+- **Proxies stay opt-in per engine.** The wizard reads them from a file or accepts one inline, hides the password while you type, and never prints the contents. `hirehunt` lacks a proxy hook, so Sweepy logs a warning when a profile configures one.
+- **The cache starts on.** A repeated query with the same engines and settings returns the previous results for an hour. Clear it with `cache.enabled: false`, or shorten `ttl_seconds`.
+- **Timeouts stop at the boundary.** Python can't stop a thread that already blocks inside a library call. Sweepy stops waiting and moves on, and each library applies its own HTTP timeouts underneath.
+- **The circuit breaker skips a failing engine.** After five consecutive failures, Sweepy stops calling that engine for 30 seconds and reports it in `skipped_sources`.
+
+### Reported postings
+
+Sweepy records every posting it reports and skips the same posting on the next sweep. Sweepy stores the record in `~/.sweepy/history.db`, scoped per profile. Set `SWEEPY_HISTORY_PATH` to store it elsewhere. The wizard's **Sweep Settings** screen exposes the on/off switch and the retention window.
+
 ```yaml
-sources:
-  greenhouse:
-    enabled: true
-    boards:
-      - "gitlab"
-      - "cloudflare"
-  ashby:
-    orgs:
-      - "modal"
-      - "perplexity"
-      - "replit"
-  lever:
-    enabled: true
-    companies:
-      - "spotify"
-  workable:
-    slugs:
-      - "soda-data-nv"
-  builtinnyc:
-    enabled: true
-    categories:
-      - "jobs/technical-writer"
+history:
+  enabled: true
+  retention_days: 4   # 0 reports every posting on every run
+  match: url+role     # url (strict) or url+role (default)
+  path: null          # null uses ~/.sweepy/history.db
 ```
 
-### Healthcare/biotech
-```yaml
-sources:
-  ashby:
-    orgs:
-      - "wealthsimple"
-      - "ziina"
-  workable:
-    slugs:
-      - "bask-health-1"
-      - "atria-health"
-  builtinnyc:
-    enabled: true
-    categories:
-      - "jobs/healthcare"
-```
+- **Retention is a re-report cadence.** Sweepy suppresses a posting until `retention_days` pass, then reports it again. A continuously live listing returns at most every four days.
+- **Matching is forgiving by default.** Sweepy compares canonical URLs after it strips tracking parameters and fragments. It then falls back to normalized title, company, and location, so a repost on another board counts as the same role. Set `match: url` to require a canonical URL match.
+- **Only live postings count.** A posting enters history after its URL passes validation. Expired links never become invisible.
+- **MCP callers get the same default.** `run_sweep` reports `previously_seen_count` and `new_count`. Pass `include_seen=true` to review earlier postings, or call `clear_history` to forget them. `create_profile` accepts `history_config`.
 
-### Adding custom platforms
-Register custom ATS domains under `platforms.custom`:
-```yaml
-platforms:
-  custom:
-    - name: "LawCrossing"
-      domain: "lawcrossing.com"
-      enabled: true
-    - name: "Indeed Legal"
-      domain: "indeed.com/legal"
-      enabled: true
-```
+### Adding another engine
 
-**How it works.** Empty lists (`boards: []`, `orgs: []`, `companies: []`, `slugs: []`, `categories: []`) fall back to the curated seed files in `data/sources/`. Explicit lists in your profile override the seeds entirely (they replace, not merge). This lets you target exactly the companies and categories relevant to your search.
+1. Create `engine/adapters/<name>_adapter.py` and subclass `ScraperAdapter`.
+2. Set `name`, the three `supports_*` flags, `default_concurrency`, and `library`.
+3. Write `preflight()` to check config and `scrape()` to return a DataFrame.
+4. Register it in `engine/adapters/__init__.py`.
+5. Describe it in `engine/engines.py` so the wizard can show and install it.
+6. Add a config block to `engine/sweep_config.py` and a prompt to `_ENGINE_PROMPTS` in `engine/config.py`.
+7. Add the package to `requirements-engines.txt` and the pyproject extras.
+8. Test the adapter on its own, then enable it alone during a sweep.
 
-## Default sources and how they run
+The orchestrator handles the rest. It dispatches by name and enforces the timeout. Any frame that comes back gets normalized.
 
-Out of the box, Sweepy sweeps five deterministic, key-free sources plus one aggregator path:
+## Agent judgment
 
-| Source | Config key | Seed file | Endpoint |
-| :--- | :--- | :--- | :--- |
-| Greenhouse | `sources.greenhouse.boards` | `data/sources/greenhouse_boards.txt` | `boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true` |
-| Ashby | `sources.ashby.orgs` | `data/sources/ashby_orgs.txt` | `api.ashbyhq.com/posting-api/job-board/{org}` |
-| Lever | `sources.lever.companies` | `data/sources/lever_companies.txt` | `api.lever.co/v0/postings/{company}?mode=json` |
-| Workable | `sources.workable.slugs` | `data/sources/workable_slugs.txt` | `apply.workable.com/api/v1/widget/accounts/{slug}` |
-| Built In NYC | `sources.builtinnyc.categories` | `data/sources/builtin_categories.txt` | `builtinnyc.com/{category}` |
-| Glassdoor | `sources.jobspy.glassdoor` | None | via `python-jobspy` |
+Sweepy scores postings by shared vocabulary, and that scoring doesn't call a model or use the network. The same inputs produce the same score, which measures wording, not fit. The MCP server treats an agent assessment as the expected path.
 
-### Gating rules
+`run_sweep` doesn't call a model. It returns `assessment_mode: "agent"`, `assessment_required: true`, and `assessed_count: 0`. The workflow continues with `get_jobs`, an independent assessment of each role against the resume, `submit_judgments`, and `render_report`. Pass every judgment in one `judgments` list to keep a 24-role assessment to one call. Assessed cards show `NN% MATCH`. Unassessed cards keep `NN% KEYWORD OVERLAP`.
 
-Each deterministic source runs only when both conditions hold:
+`render_report` takes a `playbook` argument for the closing strategy box. Write plain prose. Sweepy escapes ampersands and turns newlines into line breaks. `**bold**` renders as bold text, and angle brackets become plain text. Sweepy stores the playbook with the session, and a later render reuses it instead of the generated one. Starting a new sweep clears it.
 
-1. Set `sources.<name>.enabled` to `true` (default).
-2. Set `platforms.<name>` to `true` (default) where a matching key exists.
+In `agent` mode, `render_report` refuses to build a mixed report. It returns an error listing the unassessed job ids. The assistant reads that list and submits judgments for the missing ids. Profiles that want keyword-only reports set `report.assessment: "keyword"`. A command-line run also reports keyword overlap, since no agent supplies judgments. Set `SWEEPY_REQUIRE_JUDGMENTS=1` when the gate must apply to every profile and to `export_report` as well.
 
-Built In NYC has no `platforms.builtinnyc` key, so it honors `sources.builtinnyc.enabled` alone. Glassdoor flows through `platforms.aggregators`, alongside the other `python-jobspy` sites.
+A live sweep scrapes boards for a minute or longer. The MCP server runs it in the background. `run_sweep` waits at most 45 seconds and then returns `sweep_status: "running"` with a `job_id`. Poll `get_sweep_status` until it reports `completed`. The sweep keeps running if the client disconnects. Set `SWEEPY_MCP_WAIT_SECONDS` to lower the wait for hosts with tighter tool timeouts.
 
-> [!WARNING]
-> Greenhouse and Lever now run by default, a change in v2.2.0. A profile that predates v2.2.0 discovers new postings unless you opt out. The flags `platforms.ashby: false`, `platforms.workable: false`, `platforms.greenhouse: false`, and `platforms.lever: false` now stop those deterministic seed sources. Before v2.2.0, they filtered only `python-jobspy` results. No flag default changed. Turn off a source with `sources.<name>.enabled: false` or its `platforms.<name>: false`.
+MCP-created profiles use the built-in engines plus installed optional engines that pass
+their default configuration checks. Provide `sources_config` to pick engines
+explicitly. OpenRoles needs a slug for each company. Apify needs explicit opt-in
+because it may incur charges.
 
-### Bandwidth trade-off
+The assistant can verify results and fill coverage gaps with its search tools. It should
+inspect skipped sources, check postings against employer career pages, and add verified
+omissions to the report. It must label inaccessible listings as unverified and disclose
+when it can't confirm complete coverage.
 
-Greenhouse boards fetch full content in one request per board (`?content=true`) so descriptions, departments, and pay metadata are present for scoring. Some boards return hundreds of postings, so a sweep can pull low tens of megabytes across all seeded boards. Sweepy pre-filters by your profile `titles` while normalizing to bound memory and time. It sends one request per source sequentially and applies the `SWEEPY_SOURCE_DELAY` delay (default 0.2 seconds) between requests. Smaller seed lists finish faster.
+Read [MCP integration](https://pvega62.github.io/software/docs/sweepy/reference/mcp-integration) for the setup steps.
 
-## Custom platforms and caveats
+Every MCP tool publishes read-only, destructive, idempotent, and open-world hints. Compatible hosts read those hints before they call the tool.
 
-Register custom ATS domains under `platforms.custom` to classify postings directly into your report directory.
+## Before you upload your resume
 
-### Platform compatibility
+Your layout decides how much text Sweepy can read. A two-column design, a table, or a scanned page scrambles the text the engine reads and lowers your scores. One clean column of real text extracts most reliably, and applicant tracking systems read it the same way.
 
-| Platform type | Examples | Compatibility | Caveats |
-| :--- | :--- | :--- | :--- |
-| **Public ATS** | Greenhouse, Ashby, Lever, Workable, SmartRecruiters, Breezy HR | **Fully supported** | Standard server-rendered job pages parse and validate cleanly. |
-| **Client-rendered SPAs** | Workday (`myworkdayjobs.com`), Oracle HCM | **Limited** | Platforms require dynamic JavaScript. Without a browser grid, initial HTML payloads may lack descriptions. |
-| **Auth-walled portals** | Handshake, corporate intranets | **Unsupported** | Require session cookies or SSO credentials. |
-| **Anti-bot aggregators** | Boards with Cloudflare Turnstile or PerimeterX | **Rate-limited** | Automated HTTP requests may trigger HTTP 403 blocks without proxy rotation. |
+Read [Resume formatting tips](https://pvega62.github.io/software/docs/sweepy/guides/resume-tips) before your first sweep.
 
-## Model context protocol (MCP) integration
+## Documentation
 
-Sweepy provides a built-in MCP server (`server.py`) that uses `stdio` transport. MCP clients such as Antigravity and Claude Desktop configure search profiles and run sweeps from a conversation.
+### Getting started
 
-### Available tools
+- [Introduction](https://pvega62.github.io/software/docs/sweepy/intro)
+- [Installation](https://pvega62.github.io/software/docs/sweepy/installation)
+- [Configuration](https://pvega62.github.io/software/docs/sweepy/setup)
+- [Running your first sweep](https://pvega62.github.io/software/docs/sweepy/first-sweep)
+- [Understanding your results](https://pvega62.github.io/software/docs/sweepy/understanding-results)
 
-| Tool | Parameters | Description |
-| :--- | :--- | :--- |
-| `create_profile` | `name`, `titles`, `location`, `resume_path`, `remote_only` *(default `false`)*, `include_hybrid` *(default `true`)*, `min_salary` *(default `0`)*, `must_have_skills`, `platforms`, `output_filename` | Generates a validated YAML search profile without running the terminal wizard. |
-| `run_sweep` | `profile_path` *(optional)* | Runs the sweep pipeline, populates the session with deterministic cards, and returns their ids. |
-| `get_jobs` | `profile_stem` *(optional)*, `results_dir` *(default `'results'`)*, `limit` *(optional)* | Returns the card records held in the current session. |
-| `submit_judgments` | `job_id`, `match_pct` *(optional)*, `resume_track`, `resume_color`, `domain`, `summary`, `requirements`, `alignment`, `has_extended_response`, `app_format`, `comp`, `benefits`, `page_theme` | Overrides a card's deterministic fields with LLM judgment. Supplying `match_pct` flips the label to `MATCH`. |
-| `import_jobs` | `jobs_json`, `validate` *(default `false`)* | Appends agent-found jobs (canonical card schema) into the session. |
-| `render_report` | `profile_stem` *(optional)*, `results_dir` *(default `'results'`)*, `output_filename` *(optional)*, `playbook` *(optional)* | Renders the cards PDF from the session. |
-| `get_results` | `profile_stem` *(optional)*, `results_dir` *(default `'results'`)*, `limit` *(default `10`)* | Retrieves the top matching roles, playbook recommendations, and artifact paths from the most recent run. |
-| `export_report` | `json_source` *(optional)*, `profile_stem` *(optional)*, `results_dir` *(default `'results'`)*, `formats` *(default `['pdf']`; supports `pdf`, `png`, `csv`, `json`)*, `candidate_name` *(default `'Job Seeker'`)*, `output_dir` *(optional)* | Regenerates a PDF, PNG, CSV, or JSON report from an existing sweep result without re-running discovery or scoring. |
-| `convert_docx` | `docx_path`, `pdf_path` *(optional)* | Converts a `.docx` file to PDF with `python-docx` + `reportlab`, falling back to Microsoft Word when installed. |
+### Resumes and match scores
 
-The hybrid stateful flow is `run_sweep → get_jobs → submit_judgments → render_report`. With no LLM
-at all, `run_sweep` alone still renders the full cards PDF from deterministic fields.
+- [Resume formatting tips](https://pvega62.github.io/software/docs/sweepy/guides/resume-tips)
+- [Scoring and limits](https://pvega62.github.io/software/docs/sweepy/guides/scoring-and-limits)
 
-### Connecting to Antigravity or Claude Desktop
+### Command and configuration reference
 
-Add Sweepy to your local client's MCP configuration file (such as `mcp_config.json` or `claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "sweepy": {
-      "command": "python",
-      "args": [
-        "/path/to/sweepy/server.py"
-      ]
-    }
-  }
-}
-```
-
-Once registered, your AI assistant can run commands such as:
-- *"Create a Sweepy profile for Alex searching for remote Technical Writer roles in New York. The résumé is at `path/to/resume.pdf`."*
-- *"Run a sweep with the writer profile and show the top 5 matches."*
-- *"Regenerate the PDF from the last pedro_writer sweep and save it to the Desktop."*
-
-For detailed LLM prompting patterns, tool sequencing, and workflows, consult [AGENTS.md](AGENTS.md).
-
-### Install the /sweepy skill
-
-Sweepy includes a ready-to-use `/sweepy` skill for skill-aware CLIs (Copilot CLI,
-Claude Code, Antigravity). Copy the bundled folder into your CLI's skills directory:
-
-```bash
-cp -r skills/sweepy ~/.claude/skills/sweepy   # adjust to your CLI's skills path
-```
-
-Then register the MCP server (above) and restart the CLI. The skill documents the
-three core flows:
-
-- **Start a new scrape**: `create_profile` then `run_sweep`.
-- **View the results of a scrape**: `get_results` for top matches and playbooks, or `get_jobs` for the full card set.
-- **Export the results to a CSV file**: `export_report` with `formats=["csv"]`.
-
-The skill also covers the CLI fallback (`python swee.py --setup`, `--profile`, and
-`--docx`) for environments without MCP support.
-
-## Sample report
-
-Sweepy produces a card-style PDF report and can rasterize it to PNG. The repository includes one real, single-page example for review: the top 4 roles from the `paralegal_nyc` profile, captured from live LinkedIn postings.
-
-- [Sample report (PDF)](docs/sample_report.pdf)
-- [Sample report, page 1 (PNG)](docs/sample_report.png)
-
-Regenerate both with `python scripts/make_sample.py`.
+- [Commands and flags](https://pvega62.github.io/software/docs/sweepy/reference/cli-reference)
+- [Configuration reference](https://pvega62.github.io/software/docs/sweepy/reference/configuration-reference)
+- [Job sources and platforms](https://pvega62.github.io/software/docs/sweepy/reference/sources-and-platforms)
+- [MCP integration](https://pvega62.github.io/software/docs/sweepy/reference/mcp-integration)
+- [MCP tool reference](https://pvega62.github.io/software/docs/sweepy/reference/mcp-tool-reference)
+- [Developer reference](https://pvega62.github.io/software/docs/sweepy/reference/developer-reference)
 
 ## Legal and responsible use
 
-Sweepy uses `python-jobspy` to scrape public job boards including LinkedIn, Indeed, Glassdoor, and ZipRecruiter without API keys. It also fetches the public Greenhouse and Lever job-board APIs, the Ashby and Workable APIs, and Built In NYC pages directly. Scraping may violate the Terms of Service of some platforms. You are responsible for how you use this tool.
+Sweepy scrapes public job boards and job-board APIs. Scraping may violate the terms of service of some platforms. Review those terms before you rely on the tool.
 
-- This project targets **personal job searching**, not bulk data collection or redistribution.
-- Respect rate limits and the target sites' policies. Don't hammer endpoints. Sweepy sends a polite User-Agent and a small inter-request delay (override with the `SWEEPY_SOURCE_DELAY` environment variable).
-- Sweepy doesn't provide legal advice. Review the ToS of any platform you query before relying on it.
+- Use it for **personal job searching**. Don't use it for bulk collection or redistribution.
+- Respect rate limits. Sweepy sends a polite User-Agent and a short delay between requests. Raise the delay with the `SWEEPY_SOURCE_DELAY` environment variable.
+- Sweepy doesn't offer legal advice.
 
-See [`python-jobspy`](https://github.com/Bunsly/JobSpy) for the upstream scraper and its own usage notes.
-
-## Module reference
-- `swee.py` is the primary orchestrator and `argparse` command-line entry point.
-- `server.py` is the Model Context Protocol (`stdio`) server that exposes tools for large language model (LLM) automation.
-- `engine/config.py` holds the interactive command-line wizard and YAML parsing logic.
-- `engine/discovery.py` handles scraper orchestration (jobspy + deterministic sources), ATS detection, and deduplication.
-- `engine/sources/` holds the deterministic Greenhouse, Ashby, Lever, Workable, and Built In NYC fetchers with seed lists in `data/sources/`.
-- `engine/validator.py` checks URL uptime and detects HTTP soft 404 responses.
-- `engine/scorer.py` handles resume keyword extraction, percentage matching, and tagging.
-- `engine/enrich.py` provides deterministic card enrichment for summaries, requirements, comp, resume-track routing, and match provenance.
-- `engine/session.py` is the thread-safe card-record store backing the MCP hybrid stateful flow.
-- `engine/report.py` renders the default card-layout PDF (a faithful port of the reference layout).
-- `engine/pdf_builder.py` renders the legacy table-layout PDF (`report.style: legacy`).
-- `engine/exporter.py` exports CSV and JSON, plus PNG rasterization of report PDFs.
-- `engine/docx.py` converts DOCX to PDF with python-docx and reportlab, and falls back to Word.
-- `engine/logging.py` writes opt-in debug logs under `logs/`.
+Scraping runs through [`python-jobspy`](https://github.com/Bunsly/JobSpy) and, when you install them, [`hirehunt`](https://pypi.org/project/hirehunt/), [`openroles`](https://pypi.org/project/openroles/), [`jobdrop`](https://pypi.org/project/jobdrop/), and [Apify](https://apify.com/). Each project publishes its own usage notes. Google Jobs, LinkedIn, Indeed, and Glassdoor scraping may violate those platforms' terms of service. Apify moves the request to a managed service. It doesn't change the legal risk.
 
 ## License
 

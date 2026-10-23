@@ -1,9 +1,10 @@
 """Regenerate docs/sample_report.{pdf,png} from the latest real sweep result.
 
 Reads the most recent `results/*_*.json` file (excluding `_export.json`) and
-renders the top 4 cards as a single-page sample. Run from the repo root:
+renders the top cards as a single-page sample. Run from the repo root:
 
     python scripts/make_sample.py [--results results] [--profile paralegal_nyc]
+                                  [--count 6] [--complete-only] [--renumber]
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ SAMPLE_PROFILE = {
     "sources": {"jobspy": {"linkedin": True, "indeed": True, "glassdoor": True, "zip_recruiter": True},
                 "ashby": {"orgs": []}, "workable": {"slugs": []},
                 "builtinnyc": {"enabled": True, "categories": []}},
-    "report": {"cards_per_page": 4, "max_cards": 4, "style": "cards", "destinations": []},
+    "report": {"cards_per_page": 6, "max_cards": 6, "style": "cards", "destinations": []},
     "export": {"format": "pdf,csv,json", "output_dir": "results"},
 }
 
@@ -49,7 +50,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--results", default="results")
     ap.add_argument("--profile", default="paralegal_nyc")
-    ap.add_argument("--count", type=int, default=4, help="cards to render (default 4)")
+    ap.add_argument("--count", type=int, default=6, help="cards to render (default 6)")
+    ap.add_argument(
+        "--complete-only",
+        action="store_true",
+        help="render only cards that carry a company and posting text",
+    )
+    ap.add_argument(
+        "--renumber",
+        action="store_true",
+        help="number the rendered cards 1..N instead of keeping sweep ranks",
+    )
     args = ap.parse_args()
 
     src = _latest_results(args.results, args.profile)
@@ -63,7 +74,17 @@ def main() -> None:
     if isinstance(cards, dict):
         cards = cards.get("roles", cards.get("cards", []))
 
+    if args.complete_only:
+        cards = [
+            c
+            for c in cards
+            if str(c.get("company") or "").strip() and str(c.get("description") or "").strip()
+        ]
+
     cards = cards[: args.count]
+    if args.renumber:
+        for position, card in enumerate(cards, start=1):
+            card["rank"] = position
     for c in cards:
         c["page"] = 1
         c["page_theme"] = f"Page 1: Ranks 1-{len(cards)}"
