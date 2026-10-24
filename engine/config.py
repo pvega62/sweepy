@@ -166,7 +166,7 @@ def _print_welcome_banner() -> None:
             *logo,
             "S W E E P Y",
             "Search smarter, better, faster, stronger.",
-            "Modern job searching requires modern solutions.",
+            "Modern job hunting requires modern solutions.",
         ]
     )
     for index, line in enumerate(banner):
