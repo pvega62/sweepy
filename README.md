@@ -22,7 +22,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the current version and release history.
 
 ## Quick start
 
-You need **Python 3.10 or newer**. On Python 3.13, some packages build from source. You may need the Microsoft C++ Build Tools first. See [Installation](https://pvega62.github.io/software/docs/sweepy/installation).
+You need **Python 3.10 or newer**. On Python 3.13, some packages build from source. You may need the Microsoft C++ Build Tools first. See [Installing Sweepy](https://pvega62.github.io/software/docs/sweepy/installation).
 
 ```bash
 git clone https://github.com/pvega62/sweepy.git
