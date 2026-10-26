@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import json
+import logging
 import os
 import threading
 
@@ -706,6 +707,7 @@ def test_run_sweep_enables_debug_logging_and_returns_log_path(
 ):
     debug_log = str(tmp_path / "sweepy_mcp.log")
     captured = {}
+    caplog.set_level(logging.INFO, logger="sweepy.server")
     monkeypatch.setattr(server, "enable_debug_logging", lambda: debug_log)
     monkeypatch.setattr(
         server,

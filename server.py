@@ -472,16 +472,16 @@ def _run_sweep_job(job: "_SweepJob") -> None:
         # Adopt the cards before announcing completion so a waiting tool call
         # never reads an empty session.
         _apply_sweep_result(job)
-        job.status = "completed"
         log.info("MCP run_sweep completed (job=%s)", job.id)
+        job.status = "completed"
     except _EXPECTED as exc:
         job.error = str(exc)
-        job.status = "failed"
         log.warning("%s: %s", type(exc).__name__, exc)
+        job.status = "failed"
     except BaseException as exc:  # a broken sweep must not strand the job
         job.error = str(exc)
-        job.status = "failed"
         log.exception("run_sweep job %s failed", job.id)
+        job.status = "failed"
     finally:
         job.finished_at = time.monotonic()
 

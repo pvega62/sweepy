@@ -429,7 +429,7 @@ def test_welcome_banner_uses_a_centered_color_ready_panel(capsys):
     output = capsys.readouterr().out
     assert "S W E E P Y" in output
     assert "Search smarter, better, faster, stronger." in output
-    assert "Modern job searching requires modern solutions." in output
+    assert "Modern job hunting requires modern solutions." in output
     assert "╔" in output
     assert "\x1b[" not in output
     banner_lines = output.splitlines()
