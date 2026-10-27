@@ -28,6 +28,7 @@ def _card(i, match_kind="overlap", extended=False):
         "summary": "Summary text.",
         "requirements": "Requirements text.",
         "alignment": "Alignment text.",
+        "concerns": "Concern text.",
         "comp": "$100K - $120K",
         "benefits": "Not disclosed",
         "page": 0,
@@ -198,6 +199,42 @@ def test_amber_and_slate_cards(tmp_path):
     assert "STANDARD / QUICK APPLY" in text
 
 
+def test_card_renders_the_concern_next_to_the_highlight(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    build_report([_card(1)], path, _profile(max_cards=1))
+    text = _pages(path)[0][0]
+    assert "Application Tip:" in text
+    assert "Working Against You:" in text
+    assert "Concern text." in text
+
+
+def test_card_omits_the_concern_line_when_empty(tmp_path):
+    card = _card(1)
+    card["concerns"] = ""
+    path = str(tmp_path / "r.pdf")
+    build_report([card], path, _profile(max_cards=1))
+    assert "Working Against You:" not in _pages(path)[0][0]
+
+
+def test_card_renders_portfolio_fit_beside_the_match(tmp_path):
+    card = _card(1, match_kind="match")
+    card["portfolio_fit"] = 85
+    path = str(tmp_path / "r.pdf")
+    build_report([card], path, _profile(max_cards=1))
+    text = _pages(path)[0][0]
+    assert "89% MATCH" in text
+    assert "85% PORTFOLIO FIT" in text
+    assert text.index("89% MATCH") < text.index("85% PORTFOLIO FIT")
+
+
+def test_card_omits_portfolio_fit_when_unset(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    build_report([_card(1)], path, _profile(max_cards=1))
+    text = _pages(path)[0][0]
+    assert "PORTFOLIO FIT" in text  # the legend explains the score
+    assert "% PORTFOLIO FIT" not in text  # but no card carries one
+
+
 def test_playbook_on_last_page(tmp_path):
     path = str(tmp_path / "r.pdf")
     build_report([_card(i) for i in range(1, 6)], path, _profile())
@@ -274,3 +311,92 @@ def test_playbook_reserves_space_only_on_the_last_page(tmp_path):
     assert sum(per_page) == 24
     # Only the final page may leave room for the playbook box.
     assert per_page[:-1] == [6] * (len(per_page) - 1)
+
+
+def _portfolio_card(i, **extra):
+    card = _card(i)
+    card.update(extra)
+    return card
+
+
+def test_card_lists_the_portfolio_pieces(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    card = _portfolio_card(
+        1,
+        portfolio_url="https://example.com/work",
+        portfolio_pieces=["Case Study A", "Case Study B"],
+    )
+
+    build_report([card], path, _profile())
+
+    text = _pages(path)[0][0]
+    assert "Portfolio:" in text
+    assert "example.com" in text
+    assert "Pieces: Case Study A, Case Study B" in text
+
+
+def test_card_names_the_chosen_portfolio_highlight(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    card = _portfolio_card(
+        1,
+        portfolio_url="https://example.com/work",
+        portfolio_pieces=["Case Study A"],
+        portfolio_highlight="Lead with Case Study A",
+    )
+
+    build_report([card], path, _profile())
+
+    text = _pages(path)[0][0]
+    assert "Highlight: Lead with Case Study A" in text
+    assert "Pieces:" not in text
+
+
+def test_card_names_a_local_portfolio_file(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    card = _portfolio_card(1, portfolio_path=r"C:\work\portfolio.pdf")
+
+    build_report([card], path, _profile())
+
+    assert "Portfolio: portfolio.pdf" in _pages(path)[0][0]
+
+
+def test_report_header_routes_each_track_to_its_portfolio(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    profile = _profile()
+    profile["portfolio"] = {
+        "sources": [
+            {"track": "Tech Writer Resume", "url": "https://example.com/tech"},
+        ]
+    }
+
+    build_report([_card(1)], path, profile)
+
+    text = _pages(path)[0][0]
+    assert "Portfolio Routing:" in text
+    assert "Tech Writer Resume" in text
+    assert "example.com/tech" in text
+
+
+def test_report_omits_portfolio_rows_without_a_portfolio(tmp_path):
+    path = str(tmp_path / "r.pdf")
+
+    build_report([_card(1)], path, _profile())
+
+    text = _pages(path)[0][0]
+    assert "Portfolio Routing" not in text
+    assert "Portfolio:" not in text
+    assert "PORTFOLIO SOURCES" not in text
+
+
+def test_default_playbook_names_the_portfolio_sources(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    profile = _profile()
+    profile["portfolio"] = {"sources": [{"url": "https://example.com/work"}]}
+    card = _portfolio_card(1, portfolio_highlight="Case Study A")
+
+    build_report([card], path, profile)
+
+    text = _pages(path)[-1][0]
+    assert "PORTFOLIO SOURCES" in text
+    assert "example.com/work" in text
+    assert "1 role(s) name the pieces to highlight" in text

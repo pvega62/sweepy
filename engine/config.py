@@ -42,6 +42,17 @@ from engine.engines import (
     status_table,
 )
 from engine.logging import recent_log_lines
+from engine.portfolio import (
+    DEFAULT_PIECES_PER_CARD,
+    MAX_PIECES_PER_CARD,
+    PORTFOLIO_SUFFIXES,
+    looks_like_url,
+    normalize_portfolio,
+    portfolio_errors,
+)
+from engine.portfolio import (
+    SUPPORTED_LABEL as PORTFOLIO_LABEL,
+)
 from engine.sweep_config import legacy_profile_notice, normalize_sources, validate_sources
 from engine.tracking import tracking_enabled
 from engine.updater import update_sweepy
@@ -581,10 +592,12 @@ def _ask_color(track_name: str) -> str:
 class _Step:
     """One wizard question: a stable key, a human label, and the ask callable."""
 
-    def __init__(self, key: str, label: str, ask: Callable):
+    def __init__(self, key: str, label: str, ask: Callable, context: bool = False):
         self.key = key
         self.label = label
         self.ask = ask
+        # Steps that need earlier answers, such as a portfolio per resume track.
+        self.context = context
 
 
 def _text_default(current: Any) -> str:
@@ -910,6 +923,103 @@ def _ask_tracks(current=None):
                 "route_keywords": [k.strip() for k in (keywords_str or "").split(",") if k.strip()],
             })
     return tracks
+
+
+def _pieces_setting(block: dict) -> int:
+    value = (block or {}).get("pieces_per_card")
+    if type(value) is int and 1 <= value <= MAX_PIECES_PER_CARD:
+        return value
+    return DEFAULT_PIECES_PER_CARD
+
+
+def _ask_portfolio_entry(value: str) -> Optional[dict]:
+    """Turn one wizard answer into a portfolio entry, or warn and return None."""
+    cleaned = (value or "").strip().strip('"')
+    if not cleaned:
+        return None
+    if looks_like_url(cleaned):
+        return {"url": cleaned}
+    candidate = os.path.abspath(os.path.expanduser(cleaned))
+    if not os.path.exists(candidate):
+        log.warning("No file at %s. Enter a full path or an http(s) URL.", cleaned)
+        return None
+    if os.path.splitext(candidate)[1].lower() not in PORTFOLIO_SUFFIXES:
+        log.warning("Portfolio files must be one of: %s", PORTFOLIO_LABEL)
+        return None
+    return {"path": candidate}
+
+
+def _ask_pieces_per_card(current: dict) -> int:
+    default = current.get("pieces_per_card") or DEFAULT_PIECES_PER_CARD
+    while True:
+        raw = _ask(
+            questionary.text(
+                "How many portfolio pieces should each card list?",
+                default=str(default),
+            )
+        )
+        text = (raw or "").strip()
+        if not text:
+            return DEFAULT_PIECES_PER_CARD
+        try:
+            value = int(text)
+        except ValueError:
+            log.warning("Enter a whole number from 1 to %d.", MAX_PIECES_PER_CARD)
+            continue
+        if 1 <= value <= MAX_PIECES_PER_CARD:
+            return value
+        log.warning("Enter a number from 1 to %d.", MAX_PIECES_PER_CARD)
+
+
+def _ask_portfolio(current=None, answers=None):
+    """Collect one portfolio per resume track: an online URL or a local file."""
+    existing = current if isinstance(current, dict) else {}
+    sources = [dict(source) for source in (existing.get("sources") or [])]
+    if sources:
+        keep = _ask(
+            questionary.confirm(
+                f"Keep your {len(sources)} portfolio source(s)?", default=True
+            )
+        )
+        if keep:
+            return {"sources": sources, "pieces_per_card": _pieces_setting(existing)}
+
+    wants_portfolio = _ask(
+        questionary.confirm(
+            "Do you have a portfolio, writing samples, or case studies to submit with "
+            "applications?",
+            default=bool(sources),
+        )
+    )
+    if not wants_portfolio:
+        return {}
+
+    track_names = [
+        str(track.get("name") or "").strip()
+        for track in (answers or {}).get("tracks") or []
+        if str(track.get("name") or "").strip()
+    ]
+    collected: List[dict] = []
+    while True:
+        raw = _ask(
+            questionary.text(
+                "Portfolio URL or local file path (leave blank to finish):"
+            )
+        )
+        if not (raw or "").strip():
+            break
+        entry = _ask_portfolio_entry(raw)
+        if entry is None:
+            continue
+        if track_names:
+            options = ["All tracks (default)", *track_names]
+            choice = _ask(_select("Which resume track does this portfolio serve?", options))
+            if choice and choice != options[0]:
+                entry["track"] = choice
+        collected.append(entry)
+    if not collected:
+        return {}
+    return {"sources": collected, "pieces_per_card": _ask_pieces_per_card(existing)}
 
 
 def _ask_debug(current=None):
@@ -1431,6 +1541,7 @@ def _build_steps():
         _Step("formats", "Export formats", _ask_formats),
         _Step("job_tracking", "Job tracking columns", _ask_job_tracking),
         _Step("tracks", "Resume tracks", _ask_tracks),
+        _Step("portfolio", "Portfolio sources", _ask_portfolio, context=True),
         _Step("debug", "Debug logging", _ask_debug),
     ]
 
@@ -1445,7 +1556,9 @@ def _collect(steps, seed=None):
         if current is None:
             current = answers.get(step.key)
         try:
-            answers[step.key] = step.ask(current)
+            answers[step.key] = (
+                step.ask(current, answers) if step.context else step.ask(current)
+            )
         except _GoBack:
             if index == 0:
                 raise
@@ -1464,6 +1577,8 @@ def _format_answer(step, value):
         return ", ".join(c["name"] for c in value) if value else "(none)"
     if step.key == "tracks":
         return ", ".join(t["name"] for t in value) if value else "(none)"
+    if step.key == "portfolio":
+        return _format_portfolio(value)
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
     if isinstance(value, bool):
@@ -1471,6 +1586,18 @@ def _format_answer(step, value):
     if value in (None, ""):
         return "(blank)"
     return str(value)
+
+
+def _format_portfolio(value) -> str:
+    """Summarize the portfolio answer for the review screen."""
+    sources = (value or {}).get("sources") if isinstance(value, dict) else value
+    if not sources:
+        return "(none)"
+    parts = []
+    for source in sources:
+        target = source.get("url") or os.path.basename(source.get("path") or "")
+        parts.append(f"{source.get('track') or 'all tracks'}: {target}")
+    return ", ".join(parts)
 
 
 def _format_boards(boards: dict) -> str:
@@ -1678,6 +1805,7 @@ def _answers_from_profile(profile_data: Dict) -> Dict:
         "formats": formats,
         "job_tracking": tracking_enabled(export),
         "tracks": [dict(t) for t in (resume.get("tracks") or [])],
+        "portfolio": copy.deepcopy(profile_data.get("portfolio") or {}),
         "debug": bool(profile_data.get("debug")),
     }
 
@@ -1710,6 +1838,20 @@ def _merge_answers(profile_data: Dict, answers: Dict) -> Dict:
     elif merged.get("resume", {}).get("tracks"):
         resume.pop("tracks", None)
     merged["resume"] = resume
+
+    portfolio = answers.get("portfolio")
+    sources = (portfolio or {}).get("sources") if isinstance(portfolio, dict) else None
+    if sources:
+        problems = portfolio_errors(portfolio)
+        if problems:
+            log.warning(
+                "Keeping the saved portfolio; the new answers do not validate: %s",
+                "; ".join(problems),
+            )
+        else:
+            merged["portfolio"] = normalize_portfolio(portfolio)
+    elif "portfolio" in answers:
+        merged.pop("portfolio", None)
 
     platforms = dict(merged.get("platforms") or {})
     boards = answers.get("platforms")
@@ -1986,7 +2128,11 @@ def _reopen_last_step(answers: Dict, steps) -> None:
         return
     step = steps[-1]
     try:
-        answers[step.key] = step.ask(answers.get(step.key))
+        answers[step.key] = (
+            step.ask(answers.get(step.key), answers)
+            if step.context
+            else step.ask(answers.get(step.key))
+        )
     except _GoBack:
         return
 

@@ -1,4 +1,4 @@
-from engine.enrich import enrich_jobs, get_tracks, route_track
+from engine.enrich import NO_CONCERNS, enrich_jobs, get_tracks, route_track
 
 
 def _job(**overrides):
@@ -49,6 +49,18 @@ def test_enrich_populates_card_schema():
     assert card["summary"]
     assert card["requirements"]
     assert card["alignment"] == "Highlight your Python experience."
+
+
+def test_enrich_names_missing_keywords_as_concerns():
+    cards = enrich_jobs([_job(missing_skills=["figma", "kubeflow"])], _profile())
+    assert cards[0]["concerns"] == (
+        "Posting asks for figma, kubeflow, which the resume does not show."
+    )
+
+
+def test_enrich_concerns_reads_clean_when_nothing_is_missing():
+    cards = enrich_jobs([_job()], _profile())
+    assert cards[0]["concerns"] == NO_CONCERNS
 
 
 def test_enrich_extended_response_from_amber_badge():
@@ -136,6 +148,53 @@ def test_enrich_strips_html_from_the_description_excerpt():
     assert card["description"] == "Write API docs."
 
 
+_POSTING = """Northwind builds data infrastructure for logistics teams. Trusted by 400 customers worldwide.
+
+About the role:
+
+As a Technical Writer at Northwind, you'll own the docs for our routing API. You'll work with engineers to ship quickstarts and references.
+
+Day to day, this can mean:
+
+- Repairing failing GitHub Actions workflows and getting the build green.
+- Handling Docusaurus and Node dependency upgrades.
+- Reviewing community pull requests and keeping versioned docs in shape.
+"""
+
+
+def test_summary_reads_the_role_section_not_the_company_pitch():
+    card = enrich_jobs([_job(description=_POSTING)], _profile())[0]
+    assert card["summary"].startswith("As a Technical Writer at Northwind")
+    assert "Trusted by 400 customers" not in card["summary"]
+
+
+def test_requirements_scan_bullets_beyond_the_first_paragraph():
+    card = enrich_jobs([_job(description=_POSTING)], _profile())[0]
+    assert "GitHub Actions" in card["requirements"]
+    assert not card["requirements"].startswith("Northwind builds")
+
+
+def test_requirements_read_inline_section_from_a_single_line_posting():
+    card = enrich_jobs([_job(description="Write docs. Requirements: Python and REST experience.")], _profile())[0]
+    assert card["requirements"] == "Python and REST experience."
+
+
+def test_requirements_skip_a_mention_inside_body_text():
+    text = "Join our team.\nDefine requirements for internal content systems with engineers."
+    card = enrich_jobs([_job(description=text)], _profile())[0]
+    assert card["requirements"] != "for internal content systems with engineers."
+
+
+def test_description_stays_trimmed_while_scans_read_the_whole_posting():
+    profile = _profile()
+    profile["export"] = {"description_chars": 120}
+    card = enrich_jobs([_job(description=_POSTING)], profile)[0]
+    assert len(card["description"]) <= 121
+    assert "\n" not in card["description"]
+    assert "Docusaurus" not in card["description"]
+    assert "Docusaurus" in card["requirements"]
+
+
 def test_enrich_carries_the_scored_fields_the_csv_exports():
     job = _job(
         key_matches=["python", "docs"],
@@ -152,6 +211,7 @@ def test_enrich_carries_the_scored_fields_the_csv_exports():
     assert card["currency"] == "EUR"
     assert card["key_matches"] == ["python", "docs"]
     assert card["missing_skills"] == ["figma"]
+    assert card["concerns"] == "Posting asks for figma, which the resume does not show."
     assert card["playbook"] == "Highlight your Python experience."
 
 
@@ -160,11 +220,84 @@ def test_export_fills_every_column_from_a_scored_job(tmp_path):
 
     from engine.exporter import EXPORT_COLUMNS, export_to_csv
 
+    portfolio = tmp_path / "portfolio.md"
+    portfolio.write_text("# API Playbook\n", encoding="utf-8")
+    profile = _profile()
+    profile["portfolio"] = {
+        "sources": [{"path": str(portfolio), "url": "https://example.com/work"}]
+    }
+
     job = _job(key_matches=["python", "docs"], missing_skills=["figma"])
+    job["portfolio_highlight"] = "API Playbook"
+    job["portfolio_fit"] = 72
     path = tmp_path / "sweep.csv"
-    export_to_csv(enrich_jobs([job], _profile()), str(path), tracking=True)
+    export_to_csv(enrich_jobs([job], profile), str(path), tracking=True)
     with path.open(newline="", encoding="utf-8") as handle:
         row = next(csv.DictReader(handle))
     assert [col for col in EXPORT_COLUMNS if not str(row[col]).strip()] == []
     assert row["key_matches"] == "python, docs"
     assert row["match_score"] == "87"
+    assert row["portfolio_pieces"] == "API Playbook"
+    assert row["portfolio_fit"] == "72"
+    assert row["portfolio_highlight"] == "API Playbook"
+
+
+def test_enrich_attaches_the_portfolio_for_the_routed_track(tmp_path):
+    tech = tmp_path / "tech.md"
+    tech.write_text("# API Playbook\n", encoding="utf-8")
+    ux = tmp_path / "ux.md"
+    ux.write_text("# Checkout Copy\n", encoding="utf-8")
+    profile = _profile()
+    profile["portfolio"] = {
+        "sources": [
+            {"track": "Tech Writer", "path": str(tech)},
+            {"track": "UX Writer", "path": str(ux), "url": "https://example.com/ux"},
+        ]
+    }
+
+    cards = enrich_jobs(
+        [
+            _job(),
+            _job(
+                title="UX Writer",
+                url="https://example.com/ux-role",
+                description="Write microcopy and figma content.",
+            ),
+        ],
+        profile,
+    )
+
+    tech_card = next(card for card in cards if card["resume_track"] == "Tech Writer")
+    ux_card = next(card for card in cards if card["resume_track"] == "UX Writer")
+    assert tech_card["portfolio_pieces"] == ["API Playbook"]
+    assert tech_card["portfolio_path"] == str(tech)
+    assert tech_card["portfolio_url"] == ""
+    assert ux_card["portfolio_pieces"] == ["Checkout Copy"]
+    assert ux_card["portfolio_url"] == "https://example.com/ux"
+    assert tech_card["portfolio_highlight"] == ""
+
+
+def test_enrich_leaves_portfolio_fields_blank_without_a_portfolio():
+    card = enrich_jobs([_job()], _profile())[0]
+
+    assert card["portfolio_url"] == ""
+    assert card["portfolio_path"] == ""
+    assert card["portfolio_pieces"] == []
+    assert card["portfolio_highlight"] == ""
+
+
+def test_enrich_reads_each_portfolio_once(tmp_path, monkeypatch):
+    path = tmp_path / "portfolio.md"
+    path.write_text("# Only Piece\n", encoding="utf-8")
+    profile = _profile()
+    profile["portfolio"] = {"sources": [{"path": str(path)}]}
+    calls = []
+    monkeypatch.setattr(
+        "engine.portfolio.extract_pieces",
+        lambda entry, fetch=True: calls.append(entry) or [{"title": "Only Piece", "url": "", "tags": []}],
+    )
+
+    cards = enrich_jobs([_job(url=f"https://example.com/{i}") for i in range(5)], profile)
+
+    assert len(calls) == 1
+    assert all(card["portfolio_pieces"] == ["Only Piece"] for card in cards)

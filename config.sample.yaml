@@ -48,6 +48,20 @@ resume:
       color: "#7E22CE"
       route_keywords: ["ux", "content design", "microcopy"]
 
+# Optional: the portfolio each track submits. Sweepy lists a portfolio's pieces on every
+# card, and the report names the pieces the agent chooses for each role. An entry without
+# `track` serves every track. Accepts an online URL, a local .pdf/.docx/.md/.txt/.html
+# file, and an optional `pieces` list of {title, url, tags}. `pieces_per_card` sets how
+# many pieces a card lists (1-10, default 3).
+portfolio:
+  sources:
+    - track: "Tech Writer Resume"
+      url: "https://example.com/technical-writing"
+      path: "C:/path/to/technical_writing_portfolio.pdf"
+    - track: "UX Writer Resume"
+      url: "https://example.com/ux-writing"
+  pieces_per_card: 3
+
 platforms:
   greenhouse: true
   ashby: true

@@ -734,3 +734,87 @@ def test_main_convert_missing_file_exits(tmp_path, monkeypatch, capsys):
 
     assert exc.value.code == 1
     assert "File not found" in capsys.readouterr().out
+
+
+def _portfolio_file(tmp_path, name="portfolio.md"):
+    path = tmp_path / name
+    path.write_text("# Case Study A\n", encoding="utf-8")
+    return path
+
+
+def test_portfolio_sources_attach_a_named_track(tmp_path):
+    path = _portfolio_file(tmp_path)
+
+    sources = swee._portfolio_sources([f"Tech Writer={path}"], ["Tech Writer"])
+
+    assert sources == [{"path": str(path), "track": "Tech Writer"}]
+
+
+def test_portfolio_sources_use_the_default_track(tmp_path):
+    path = _portfolio_file(tmp_path)
+
+    sources = swee._portfolio_sources([str(path)], ["Tech Writer"], "Tech Writer")
+
+    assert sources == [{"path": str(path), "track": "Tech Writer"}]
+
+
+def test_portfolio_sources_keep_urls_untouched():
+    assert swee._portfolio_sources(["https://example.com/work"], []) == [
+        {"url": "https://example.com/work"}
+    ]
+
+
+def test_portfolio_sources_reject_an_unknown_track(tmp_path):
+    path = _portfolio_file(tmp_path)
+
+    with pytest.raises(ValueError, match="matches no resume track"):
+        swee._portfolio_sources([str(path)], ["Tech Writer"], "Ghost Track")
+
+
+def test_portfolio_sources_reject_an_unknown_track_prefix():
+    with pytest.raises(ValueError, match="names track 'Ghost'"):
+        swee._portfolio_sources(["Ghost=https://example.com/work"], ["Tech Writer"])
+
+
+def test_portfolio_sources_reject_a_missing_file(tmp_path):
+    with pytest.raises(ValueError, match="file not found"):
+        swee._portfolio_sources([str(tmp_path / "gone.md")], [])
+
+
+def test_headless_setup_writes_the_portfolio(tmp_path, monkeypatch):
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 fake")
+    portfolio = _portfolio_file(tmp_path)
+    profile = tmp_path / "profile.yaml"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "swee.py",
+            "--setup",
+            "--non-interactive",
+            "--profile",
+            str(profile),
+            "--name",
+            "Alice",
+            "--titles",
+            "Writer",
+            "--location",
+            "NYC",
+            "--resume",
+            str(resume),
+            "--sources",
+            "ats",
+            "--no-cache",
+            "--portfolio",
+            str(portfolio),
+        ],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        swee.main()
+
+    assert exc.value.code == 0
+    saved = yaml.safe_load(profile.read_text(encoding="utf-8"))
+    assert saved["portfolio"]["sources"] == [{"path": str(portfolio)}]

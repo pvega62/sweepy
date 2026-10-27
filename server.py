@@ -52,7 +52,7 @@ log = logging.getLogger("sweepy.server")
 # Import engine modules under a stdout redirect so any stray print() at import time
 # cannot corrupt the JSON-RPC stream before mcp.run() starts.
 with contextlib.redirect_stdout(sys.stderr):
-    from engine.config import load_config, save_profile
+    from engine.config import is_valid_color, load_config, save_profile
     from engine.documents import convert_to_pdf
     from engine.docx import convert_docx_to_pdf
     from engine.engine_defaults import DEFAULT_HISTORY
@@ -61,13 +61,27 @@ with contextlib.redirect_stdout(sys.stderr):
     from engine.history import SweepHistory, history_scope
     from engine.logging import enable_debug_logging
     from engine.pdf_builder import build_pdf
+    from engine.portfolio import normalize_portfolio, portfolio_summary
     from engine.report import build_report
     from engine.session import SweepSession, stable_id
     from engine.sweep_config import default_engine_config, normalize_sources, validate_sources
     from engine.tracking import load_previous, tracking_enabled
     from swee import run_sweep_pipeline
 
-mcp = FastMCP("sweepy")
+_SERVER_INSTRUCTIONS = (
+    "Sweepy matches job postings against a candidate's resume and portfolio. "
+    "Before create_profile, ask the candidate for a portfolio: an online URL, a local PDF, "
+    "DOCX, Markdown, text, or HTML file, or none. Pass what they give you as `portfolios`, "
+    "one entry per resume track when the candidate targets more than one role family, and "
+    "pass `resume_tracks` when they keep a separate resume for each track. For an existing "
+    "profile, call set_portfolio instead. Every card reports the portfolio for its track "
+    "plus `portfolio_pieces`. Choose the pieces that best fit each role and submit them with "
+    "submit_judgments(portfolio_highlight=...) before render_report, so the report and the "
+    "exports name the pieces to send. A card with no portfolio carries empty portfolio "
+    "fields, and that is not a failure."
+)
+
+mcp = FastMCP("sweepy", instructions=_SERVER_INSTRUCTIONS)
 
 _WORKSPACE = os.path.realpath(
     os.environ.get("SWEEPY_WORKSPACE", os.path.dirname(os.path.abspath(__file__)))
@@ -254,6 +268,104 @@ def _validate_runtime_config(
                 raise ValueError(
                     "circuit_breaker.cooldown_seconds must be a non-negative integer"
                 )
+
+
+def _normalize_resume_tracks(tracks: Optional[List[dict]]) -> List[dict]:
+    """Validate the resume tracks an MCP caller supplies and resolve their paths."""
+    if tracks is None:
+        return []
+    if not isinstance(tracks, list):
+        raise ValueError("resume_tracks must be a list of objects")
+
+    normalized = []
+    seen = set()
+    for index, track in enumerate(tracks, start=1):
+        label = f"resume_tracks[{index}]"
+        if not isinstance(track, dict):
+            raise ValueError(f"{label} must be an object")
+        unknown = set(track) - {"name", "path", "color", "route_keywords"}
+        if unknown:
+            raise ValueError(
+                f"{label} has unsupported field(s): " + ", ".join(sorted(unknown))
+            )
+
+        name = str(track.get("name") or "").strip()
+        if not name:
+            raise ValueError(f"{label}.name must be a non-empty string")
+        if name.lower() in seen:
+            raise ValueError(f"{label}.name repeats an earlier track: {name!r}")
+        seen.add(name.lower())
+
+        path = str(track.get("path") or "").strip()
+        if path:
+            resolved = _resolve_read_path(path, must_exist=True)
+            if not resolved.lower().endswith((".pdf", ".docx")):
+                raise ValueError(
+                    f"{label}.path must point to a .pdf or .docx file: {path!r}"
+                )
+            path = resolved
+
+        color = str(track.get("color") or "").strip() or "#1D4ED8"
+        if not is_valid_color(color):
+            raise ValueError(
+                f"{label}.color must be a hex code or a color name: {color!r}"
+            )
+
+        keywords = track.get("route_keywords") or []
+        if not isinstance(keywords, list):
+            raise ValueError(f"{label}.route_keywords must be a list")
+
+        normalized.append(
+            {
+                "name": name,
+                "color": color,
+                "path": path,
+                "route_keywords": [
+                    str(keyword).strip() for keyword in keywords if str(keyword).strip()
+                ],
+            }
+        )
+    return normalized
+
+
+def _portfolio_prompt() -> str:
+    """Tell the agent how to collect a portfolio when the profile holds none."""
+    return (
+        "Ask the user whether they have a portfolio to submit: an online URL, a local "
+        "PDF, DOCX, Markdown, text, or HTML file, or none. Call set_portfolio with what "
+        "they give you, one entry per resume track when they target more than one role "
+        "family. Skip this when the user has no portfolio."
+    )
+
+
+def _portfolio_payload(profile: Optional[dict] = None) -> dict:
+    """Describe the portfolio setup for get_jobs and create_profile payloads."""
+    summary = portfolio_summary(profile if profile is not None else _session_profile)
+    payload = {
+        "portfolio_configured": summary["configured"],
+        "portfolio_sources": summary["sources"],
+        "portfolio_pieces_per_card": summary["pieces_per_card"],
+    }
+    payload["portfolio_guidance"] = (
+        "Each card lists portfolio_pieces from the portfolio for its resume track. Pick the "
+        "pieces that best fit the posting, then pass them to submit_judgments as "
+        "portfolio_highlight."
+        if summary["configured"]
+        else _portfolio_prompt()
+    )
+    return payload
+
+
+def _normalize_portfolio_block(
+    portfolios: Optional[List[dict]],
+    track_names: Optional[List[str]] = None,
+    pieces_per_card: Optional[int] = None,
+) -> dict:
+    """Validate a portfolio list from an MCP caller and return the profile block."""
+    raw: dict = {"sources": portfolios or []}
+    if pieces_per_card is not None:
+        raw["pieces_per_card"] = pieces_per_card
+    return normalize_portfolio(raw, track_names)
 
 
 def _latest_sweep_json(results_dir: str, profile_stem: Optional[str]) -> Optional[str]:
@@ -609,6 +721,7 @@ def _sweep_payload(job: "_SweepJob") -> str:
         skipped_sources=results.get("skipped_sources", []),
         elapsed_seconds=job.elapsed_seconds,
         message=message,
+        **_portfolio_payload(),
     )
 
 
@@ -645,12 +758,20 @@ def create_profile(
     cache_config: Optional[dict] = None,
     orchestrator_config: Optional[dict] = None,
     history_config: Optional[dict] = None,
+    resume_tracks: Optional[List[dict]] = None,
+    portfolios: Optional[List[dict]] = None,
+    pieces_per_card: Optional[int] = None,
     job_tracking: bool = True,
     assessment: str = "agent",
     output_filename: Optional[str] = None
 ) -> str:
     """
     Creates or updates a Sweepy search profile YAML file.
+
+    Ask the user for a portfolio before you call this tool, then pass it as ``portfolios``.
+    A candidate who targets more than one role family usually keeps one resume and one
+    portfolio per track, so pass ``resume_tracks`` too and name the track on each portfolio
+    entry.
 
     Args:
         name: Full name of the candidate.
@@ -675,6 +796,16 @@ def create_profile(
             (default 4), ``match`` (``url`` or ``url+role``), and ``path`` (default
             ``~/.sweepy/history.db``). Controls whether a sweep skips postings the user
             already received.
+        resume_tracks: Optional list of resume tracks, each with ``name``, an optional
+            ``path`` to that track's PDF or DOCX, an optional ``color``, and optional
+            ``route_keywords``. Sweepy routes each posting to the best track.
+        portfolios: Optional list of portfolios, each with an optional ``track`` naming
+            the resume track it belongs to, an optional ``url`` for an online portfolio, an
+            optional ``path`` to a local PDF, DOCX, Markdown, text, or HTML file, and an
+            optional ``pieces`` list of ``{title, url, tags}``. An entry without ``track``
+            serves every track. Sweepy lists each portfolio's pieces on the cards, and the
+            report names the pieces the agent chooses.
+        pieces_per_card: How many portfolio pieces a card lists (1-10, default 3).
         job_tracking: True (default) appends job-tracking columns to the CSV export
             (``date_applied``, ``status``, ``interview_stage``, ``offer_amount``,
             ``offer_date``, ``follow_up_date``, ``contact``, ``notes``) and carries
@@ -685,7 +816,8 @@ def create_profile(
         output_filename: Optional custom YAML path (defaults to profiles/{name}_{title}.yaml).
 
     Returns:
-        JSON string with the saved profile path.
+        JSON string with the saved profile path, the portfolio state, and, when the
+        candidate gave no portfolio, a prompt asking how to collect one.
     """
     try:
         if not name or not name.strip():
@@ -706,6 +838,11 @@ def create_profile(
             raise ValueError(
                 f"resume_path must point to a .pdf or .docx file: {resume_path!r}"
             )
+
+        tracks = _normalize_resume_tracks(resume_tracks)
+        portfolio_block = _normalize_portfolio_block(
+            portfolios, [track["name"] for track in tracks], pieces_per_card
+        )
 
         platforms_config = {
             "greenhouse": True,
@@ -739,6 +876,10 @@ def create_profile(
                 "tracking": bool(job_tracking),
             },
         }
+        if tracks:
+            profile_data["resume"]["tracks"] = tracks
+        if portfolio_block["sources"]:
+            profile_data["portfolio"] = portfolio_block
         if synonyms:
             profile_data["resume"]["synonyms"] = synonyms
         if cache_config is not None:
@@ -771,12 +912,106 @@ def create_profile(
             profile_path=saved_path,
             enabled_engines=runtime["enabled"],
             engines_not_enabled=engine_notes,
+            resume_tracks=[track["name"] for track in tracks],
+            **_portfolio_payload(profile_data),
         )
     except _EXPECTED as exc:
         log.warning("%s: %s", type(exc).__name__, exc)
         return _err(str(exc))
     except Exception as exc:
         log.exception("create_profile failed")
+        return _err(str(exc))
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def set_portfolio(
+    profile_path: str,
+    portfolios: Optional[List[dict]] = None,
+    replace: bool = False,
+    pieces_per_card: Optional[int] = None,
+) -> str:
+    """
+    Adds or updates the portfolios a saved profile submits.
+
+    Call this after the user names a portfolio. Accept an online URL, a local PDF, DOCX,
+    Markdown, text, or HTML file, or a list of pieces they want to use. One entry per
+    resume track keeps a separate portfolio for each track. Sweepy reads each portfolio
+    once per sweep and lists its pieces on the cards, so the agent can choose the pieces
+    that fit a role and pass them to submit_judgments as ``portfolio_highlight``.
+
+    Args:
+        profile_path: Path to an existing profile YAML file.
+        portfolios: List of entries, each with an optional ``track`` naming a resume track,
+            an optional ``url``, an optional ``path`` to a local file, and an optional
+            ``pieces`` list of ``{title, url, tags}``. An entry without ``track`` serves
+            every track. Pass an empty list with ``replace`` to remove every portfolio.
+        replace: True drops the saved portfolios before adding these. False keeps the
+            saved entries whose track no new entry names.
+        pieces_per_card: How many portfolio pieces a card lists (1-10). Leave unset to
+            keep the saved value, which defaults to 3.
+
+    Returns:
+        JSON string with the profile path, the resume tracks the profile defines, and the
+        portfolio state.
+    """
+    try:
+        profile_file = _resolve_read_path(profile_path, must_exist=True)
+        target = _safe_output_path(profile_file)
+        with _quiet_stdout():
+            profile = load_config(profile_file)
+
+        tracks = [
+            str(track.get("name") or "")
+            for track in (profile.get("resume") or {}).get("tracks") or []
+            if str(track.get("name") or "").strip()
+        ]
+
+        prior = profile.get("portfolio")
+        prior = prior if isinstance(prior, dict) else {}
+        if portfolios is None and pieces_per_card is None:
+            raise ValueError("Provide portfolios, pieces_per_card, or both.")
+        if pieces_per_card is None:
+            pieces_per_card = prior.get("pieces_per_card")
+
+        sources = [] if replace else [
+            dict(entry) for entry in (prior.get("sources") or []) if isinstance(entry, dict)
+        ]
+        incoming = list(portfolios or [])
+        if not replace:
+            named = {
+                str(entry.get("track") or "").strip().lower()
+                for entry in incoming
+                if isinstance(entry, dict)
+            }
+            sources = [
+                entry
+                for entry in sources
+                if str(entry.get("track") or "").strip().lower() not in named
+            ]
+
+        block = _normalize_portfolio_block(sources + incoming, tracks, pieces_per_card)
+        if block["sources"]:
+            profile["portfolio"] = block
+        else:
+            profile.pop("portfolio", None)
+
+        with _quiet_stdout():
+            save_profile(profile, target)
+        return _ok(
+            profile_path=target,
+            resume_tracks=tracks,
+            **_portfolio_payload(profile),
+        )
+    except _EXPECTED as exc:
+        log.warning("%s: %s", type(exc).__name__, exc)
+        return _err(str(exc))
+    except Exception as exc:
+        log.exception("set_portfolio failed")
         return _err(str(exc))
 
 
@@ -1261,7 +1496,14 @@ def get_jobs(
     Returns the card records held in the current sweep session, ranked by deterministic
     keyword overlap or submitted match score. For a normal job-search request, inspect
     the available evidence and assess relevant cards against the candidate's resume;
-    then submit an independent LLM judgment for each assessed card.
+    then submit an independent LLM judgment for each assessed card. A judgment states
+    both the highlight that favors the candidate and the obstacle that works against
+    them, so no card reads as a one-sided pitch.
+
+    Each card also carries ``portfolio_url``, ``portfolio_path``, ``portfolio_pieces``,
+    and ``portfolio_highlight``. ``portfolio_pieces`` comes from the portfolio for the
+    card's resume track. Choose the pieces that fit the posting and pass them to
+    ``submit_judgments`` as ``portfolio_highlight``.
 
     Args:
         profile_stem: Optional profile identifier to load a persisted session from disk.
@@ -1269,15 +1511,17 @@ def get_jobs(
         limit: Optional number of cards to return (None returns all).
 
     Returns:
-        JSON string with the list of card records. When a sweep is still running, the
-        payload also reports `sweep_status`, `running_job_id`, and its progress, because
-        the cards predate that sweep.
+        JSON string with the list of card records, the portfolio setup, and guidance for
+        the portfolio step. When a sweep is still running, the payload also reports
+        `sweep_status`, `running_job_id`, and its progress, because the cards predate
+        that sweep.
     """
     try:
         _resolve_session(results_dir, profile_stem)
         cards = _sorted_cards()
         if limit is not None:
             cards = cards[: max(1, int(limit))]
+        portfolio = _portfolio_payload()
         running = [job for job in _SWEEP_JOBS.values() if job.status == "running"]
         if running:
             # These cards predate the sweep in flight; say so rather than letting
@@ -1290,8 +1534,9 @@ def get_jobs(
                 running_job_id=newest.id,
                 progress=newest.progress,
                 message="A sweep is still running. Call get_sweep_status before using these cards.",
+                **portfolio,
             )
-        return _ok(count=len(cards), jobs=cards)
+        return _ok(count=len(cards), jobs=cards, **portfolio)
     except _EXPECTED as exc:
         log.warning("%s: %s", type(exc).__name__, exc)
         return _err(str(exc))
@@ -1309,17 +1554,20 @@ def get_jobs(
 def submit_judgments(
     job_id: Optional[str] = None,
     match_pct: Optional[int] = None,
+    portfolio_fit: Optional[int] = None,
     resume_track: Optional[str] = None,
     resume_color: Optional[str] = None,
     domain: Optional[str] = None,
     summary: Optional[str] = None,
     requirements: Optional[str] = None,
     alignment: Optional[str] = None,
+    concerns: Optional[str] = None,
     has_extended_response: Optional[bool] = None,
     app_format: Optional[str] = None,
     comp: Optional[str] = None,
     benefits: Optional[str] = None,
     page_theme: Optional[str] = None,
+    portfolio_highlight: Optional[str] = None,
     judgments: Optional[List[dict]] = None,
 ) -> str:
     """
@@ -1331,6 +1579,13 @@ def submit_judgments(
     copy the deterministic overlap score into match_pct or invent unsupported details.
     In the standard job-search workflow, submit judgments for all roles you assessed.
 
+    Every assessed card carries both sides of the case. ``alignment`` holds the
+    highlight: the strongest evidence that the candidate fits, plus the move that uses
+    it. ``concerns`` holds what works against the candidate: unmet requirements,
+    seniority or tenure gaps, domain mismatches, on-site expectations, or pay below the
+    floor. Name the specific obstacle and cite the posting text. Write "None identified"
+    only when the posting states no real obstacle.
+
     Pass ``judgments`` to assess many roles in one call. Each entry needs a ``job_id``
     plus any of the single-card fields, which keeps a 24-role assessment to one request.
 
@@ -1338,7 +1593,16 @@ def submit_judgments(
         job_id: Stable job id (from run_sweep or get_jobs).
         match_pct: Optional LLM match percentage (0-100).
         resume_track, resume_color, domain, summary, requirements, alignment,
-        has_extended_response, app_format, comp, benefits, page_theme: Optional overrides.
+        concerns, has_extended_response, app_format, comp, benefits, page_theme:
+            Optional overrides.
+        portfolio_fit: How well the track's portfolio covers what the posting asks
+            for, as a 0-100 score. Report it beside ``match_pct`` so the résumé case
+            and the sample case stay separate and auditable. Leave unset when the
+            card has no portfolio.
+        portfolio_highlight: The portfolio pieces to send with this application, named in
+            plain text. Read ``portfolio_pieces`` from the card and name the one to three
+            pieces that match the posting. Leave unset when the card has no portfolio or
+            the posting asks for none.
         judgments: Optional list of judgment objects, each with a ``job_id`` key. Do not
             combine with the single-card fields.
 
@@ -1361,15 +1625,18 @@ def submit_judgments(
         for key, value in {
             "resume_track": resume_track,
             "resume_color": resume_color,
+            "portfolio_fit": portfolio_fit,
             "domain": domain,
             "summary": summary,
             "requirements": requirements,
             "alignment": alignment,
+            "concerns": concerns,
             "has_extended_response": has_extended_response,
             "app_format": app_format,
             "comp": comp,
             "benefits": benefits,
             "page_theme": page_theme,
+            "portfolio_highlight": portfolio_highlight,
         }.items():
             if value is not None:
                 fields[key] = value
@@ -1496,6 +1763,9 @@ def render_report(
     Renders the cards PDF from the current session and writes it through the sandbox.
     In the standard LLM-assisted workflow, call this after submitting judgments so the
     report reflects assessed matches instead of only deterministic keyword overlap.
+    Cards show the portfolio for their resume track. A card with a submitted
+    ``portfolio_highlight`` names the pieces to send, and a card without one lists the
+    pieces Sweepy found.
 
     Args:
         profile_stem: Optional profile identifier to load a persisted session from disk.

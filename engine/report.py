@@ -5,6 +5,7 @@ import os
 import re
 from io import BytesIO
 from typing import List
+from urllib.parse import urlsplit
 from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.lib import colors
@@ -22,6 +23,7 @@ from reportlab.platypus import (
 )
 
 from engine.enrich import get_tracks
+from engine.portfolio import get_portfolio
 
 log = logging.getLogger("sweepy.engine.report")
 
@@ -83,6 +85,17 @@ def _match_label(job: dict) -> str:
     return f"{value}% {label}"
 
 
+def _fit_label(job: dict) -> str:
+    """Name the portfolio-fit score, or an empty string when none was submitted."""
+    raw = job.get("portfolio_fit")
+    if raw is None or str(raw).strip() == "":
+        return ""
+    try:
+        return f"{int(raw)}% PORTFOLIO FIT"
+    except (TypeError, ValueError):
+        return ""
+
+
 def _track_names(profile: dict) -> List[str]:
     return [str(t.get("name", "") or "") for t in get_tracks(profile)]
 
@@ -107,12 +120,75 @@ def _meta_html(profile: dict, cards: List[dict]) -> str:
     )
     platforms = _esc(_platforms_label(cards))
     n = len(cards)
+    portfolio_line = ""
+    routing = _portfolio_routing(profile)
+    if routing:
+        portfolio_line = f"<br/><b>Portfolio Routing:</b> {routing}"
     return (
         f"<b>Audited For:</b> {name} ({location}) | <b>Dual Resume Targeting:</b> {tracks_label}<br/>"
-        f"<b>Platforms Covered:</b> {platforms} | <b>Sorted:</b> Highest to Lowest Match % ({n} Live Links)<br/>"
+        f"<b>Platforms Covered:</b> {platforms} | <b>Sorted:</b> Highest to Lowest Match % ({n} Live Links)"
+        f"{portfolio_line}<br/>"
         '<b>Highlight Legend:</b> <font color="#B45309"><b>Amber Highlighted Cards = Extended Written '
-        'Responses Required</b></font> | Slate Cards = Standard / Quick Apply.'
+        'Responses Required</b></font> | Slate Cards = Standard / Quick Apply | '
+        '<font color="#0F766E"><b>PORTFOLIO FIT</b></font> = how well that track\'s '
+        'samples cover the posting, scored apart from the match percentage.'
     )
+
+
+def _portfolio_target(source: dict) -> str:
+    """Name the portfolio a track submits: its link, or the file name when it is local."""
+    return source.get("url") or os.path.basename(source.get("path") or "")
+
+
+def _portfolio_routing(profile: dict) -> str:
+    """Map each configured track to the portfolio that track submits."""
+    sources = get_portfolio(profile)["sources"]
+    if not sources:
+        return ""
+    parts = [
+        f"{_esc(source.get('track') or 'All tracks')} &#8594; {_esc(_portfolio_target(source))}"
+        for source in sources
+    ]
+    return " | ".join(parts)
+
+
+def _portfolio_line(job: dict) -> str:
+    """Build the card's portfolio row, or an empty string when the card has none."""
+    url = _xml_escape(str(job.get("portfolio_url", "") or ""))
+    path = str(job.get("portfolio_path", "") or "")
+    pieces = [str(piece) for piece in (job.get("portfolio_pieces") or []) if str(piece).strip()]
+    highlight = str(job.get("portfolio_highlight", "") or "").strip()
+    if not (url or path or pieces or highlight):
+        return ""
+
+    if url:
+        target = f'<a href="{url}"><b>[{_esc(_link_label(job.get("portfolio_url")))}]</b></a>'
+    elif path:
+        target = f"<b>{_esc(os.path.basename(path))}</b>"
+    else:
+        target = ""
+    body = f"<b>Portfolio:</b> {target}".strip()
+    label, value = ("Highlight", highlight) if highlight else ("Pieces", ", ".join(pieces))
+    if value:
+        body += f' &nbsp;|&nbsp; <b>{label}:</b> <font color="#1D4ED8">{_esc(value)}</font>'
+    return body
+
+
+def _link_label(url) -> str:
+    """Shorten a portfolio link to its host and first path segment.
+
+    Several tracks can live on one host (/uxwriting and /technical-writing-hardware
+    both sit on pvega62.github.io), so the host alone would not say which
+    portfolio the card sends.
+    """
+    parts = urlsplit(str(url or ""))
+    host = parts.netloc
+    if host.startswith("www."):
+        host = host[4:]
+    if not host:
+        return "open"
+    segment = next((p for p in parts.path.split("/") if p), "")
+    return f"{host}/{segment}" if segment else host
 
 
 def _page_theme(page_jobs: List[dict], page_num: int) -> str:
@@ -138,6 +214,7 @@ def _render_card(job: dict, styles: dict) -> Table:
     company = _esc(job.get("company", ""))
     domain = _esc(job.get("domain", "")).upper()
     match_label = _match_label(job)
+    fit_label = _fit_label(job)
     resume_color = job.get("resume_color", "#1D4ED8") or "#1D4ED8"
     resume_track = _esc(job.get("resume_track", ""))
     has_extended = bool(job.get("has_extended_response", False))
@@ -147,9 +224,17 @@ def _render_card(job: dict, styles: dict) -> Table:
         if has_extended
         else '<font color="#64748B"><b>[STANDARD / QUICK APPLY]</b></font>'
     )
+    # Portfolio fit sits beside the match score so the two reads stay comparable;
+    # a card without a submitted fit omits the segment entirely.
+    fit_html = (
+        f'<font color="#0F766E"><b>[{fit_label}]</b></font> &nbsp;|&nbsp; '
+        if fit_label
+        else ""
+    )
     badge_line = (
         f"<b>#{rank} // {company.upper()}</b> &nbsp;|&nbsp; "
         f'<font color="#1E40AF"><b>[{match_label}]</b></font> &nbsp;|&nbsp; '
+        f"{fit_html}"
         f'<font color="{resume_color}"><b>[SUBMIT: {resume_track}]</b></font> &nbsp;|&nbsp; '
         f"{resp_badge} &nbsp;|&nbsp; {domain}"
     )
@@ -159,9 +244,18 @@ def _render_card(job: dict, styles: dict) -> Table:
     summary = _esc(job.get("summary", ""))
     requirements = _esc(job.get("requirements", ""))
     alignment = _esc(job.get("alignment", ""))
+    concerns = _esc(job.get("concerns", ""))
+    # The concern shares the tip's line: a separate row pushed short cards past the
+    # six-per-page target. Reportlab wraps the pair when both run long.
+    concern_html = (
+        f' &nbsp;|&nbsp; <b>Working Against You:</b> <font color="#B91C1C">{concerns}</font>'
+        if concerns
+        else ""
+    )
     comp = _esc(job.get("comp", ""))
     benefits = _esc(job.get("benefits", ""))
     app_format = _esc(job.get("app_format", ""))
+    portfolio_html = _portfolio_line(job)
     url = _xml_escape(job.get("url", "") or "#")
     platform = _esc(job.get("platform", ""))
 
@@ -195,7 +289,11 @@ def _render_card(job: dict, styles: dict) -> Table:
         Spacer(1, 0.3),
         Paragraph(f"<b>Key Requirements:</b> {requirements}", styles["ReqStyle"]),
         Spacer(1, 0.3),
-        Paragraph(f"<b>Application Tip:</b> <font color=\"#0F766E\">{alignment}</font>", styles["ReqStyle"]),
+        Paragraph(
+            f"<b>Application Tip:</b> <font color=\"#0F766E\">{alignment}</font>"
+            f"{concern_html}",
+            styles["ReqStyle"],
+        ),
         Spacer(1, 0.3),
         Paragraph(
             f"<b>Comp &amp; Benefits:</b> <font color=\"#047857\"><b>{comp}</b></font> "
@@ -204,6 +302,11 @@ def _render_card(job: dict, styles: dict) -> Table:
         ),
         Spacer(1, 0.3),
         Paragraph(format_p, styles["ReqStyle"]),
+        *(
+            [Paragraph(portfolio_html, styles["ReqStyle"])]
+            if portfolio_html
+            else []
+        ),
         Spacer(1, 0.8),
         Paragraph(f'<a href="{url}"><b>[Apply on {platform} Job Board]</b></a>', styles["JobLink"]),
     ]
@@ -257,6 +360,21 @@ def _default_playbook(cards: List[dict], profile: dict) -> str:
             for t in tracks
         )
         parts.append(f"<b>- RESUME TARGETING:</b> Submit {routing}.")
+
+    sources = get_portfolio(profile)["sources"]
+    if sources:
+        highlighted = sum(
+            1 for c in cards if str(c.get("portfolio_highlight") or "").strip()
+        )
+        links = "; ".join(
+            f"<code>{_esc(source.get('track') or 'All tracks')}</code> submits "
+            f"{_esc(_portfolio_target(source))}"
+            for source in sources
+        )
+        parts.append(
+            f"<br/><b>- PORTFOLIO SOURCES:</b> {links}. "
+            f"{highlighted} role(s) name the pieces to highlight.<br/>"
+        )
 
     return "".join(parts)
 

@@ -131,7 +131,11 @@ def _default_selects():
 def _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes, selects=None):
     select_source = selects if selects is not None else _default_selects()
     monkeypatch.setattr(cfg.questionary, "text", lambda *a, **k: _stub(next(texts)))
-    monkeypatch.setattr(cfg.questionary, "confirm", lambda *a, **k: _stub(next(confirms)))
+    # A confirm beyond the scripted list answers "no", so a new yes/no step never
+    # breaks a test that predates it.
+    monkeypatch.setattr(
+        cfg.questionary, "confirm", lambda *a, **k: _stub(next(confirms, False))
+    )
     monkeypatch.setattr(cfg.questionary, "checkbox", lambda *a, **k: _stub(next(checkboxes)))
     monkeypatch.setattr(cfg.questionary, "select", lambda *a, **k: _stub(next(select_source)))
     monkeypatch.setattr(
@@ -141,7 +145,7 @@ def _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes, selects=None
 
 def test_wizard_writes_remote_only_and_parses_salary(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer, Editor", "NYC", "resume.pdf", "65,000", ""])
-    confirms = iter([True, True, False, True, False, False])
+    confirms = iter([True, True, False, True, False, False, False])
     checkboxes = iter([["ats:greenhouse", "ats:ashby"], ["pdf", "csv"]])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes)
     monkeypatch.chdir(tmp_path)
@@ -157,7 +161,7 @@ def test_wizard_writes_remote_only_and_parses_salary(monkeypatch, tmp_path):
 
 def test_wizard_saves_the_boards_picked_from_the_catalog(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer, Editor", "NYC", "resume.pdf", "", ""])
-    confirms = iter([True, True, False, True, False, False])
+    confirms = iter([True, True, False, True, False, False, False])
     checkboxes = iter(
         [["jobspy:indeed", "jobspy:glassdoor", "ats:lever"], ["pdf", "csv"]]
     )
@@ -177,7 +181,7 @@ def test_wizard_saves_the_boards_picked_from_the_catalog(monkeypatch, tmp_path):
 
 def test_wizard_reparses_invalid_salary(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "abc", "65k", ""])
-    confirms = iter([False, True, False, True, False, False])
+    confirms = iter([False, True, False, True, False, False, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes)
     monkeypatch.chdir(tmp_path)
@@ -190,7 +194,7 @@ def test_wizard_reparses_invalid_salary(monkeypatch, tmp_path):
 
 def test_wizard_enables_debug_logging(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
-    confirms = iter([False, True, False, True, False, True])
+    confirms = iter([False, True, False, True, False, False, True])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes)
     monkeypatch.chdir(tmp_path)
@@ -203,7 +207,7 @@ def test_wizard_enables_debug_logging(monkeypatch, tmp_path):
 
 def test_wizard_can_edit_an_answer_before_submitting(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", "", "Editor"])
-    confirms = iter([False, True, False, True, False, False])
+    confirms = iter([False, True, False, True, False, False, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(
         ["Create a new profile", "Edit an answer", "Job titles", "Submit profile", "Exit"]
@@ -219,7 +223,7 @@ def test_wizard_can_edit_an_answer_before_submitting(monkeypatch, tmp_path):
 
 def test_wizard_validates_track_color(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", "", "Tech Writer", "badcolor", "navy", "track.pdf", "api", ""])
-    confirms = iter([False, True, False, True, True, False])
+    confirms = iter([False, True, False, True, True, False, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes)
     monkeypatch.chdir(tmp_path)
@@ -233,7 +237,7 @@ def test_wizard_validates_track_color(monkeypatch, tmp_path):
 
 def test_wizard_show_recent_logs_choice(monkeypatch, tmp_path, capsys):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
-    confirms = iter([False, True, False, True, False, False])
+    confirms = iter([False, True, False, True, False, False, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(["Create a new profile", "Show recent logs", "Submit profile", "Exit"])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes, selects)
@@ -251,7 +255,7 @@ def test_wizard_show_recent_logs_choice(monkeypatch, tmp_path, capsys):
 
 def test_wizard_show_recent_logs_empty(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
-    confirms = iter([False, True, False, True, False, False])
+    confirms = iter([False, True, False, True, False, False, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(["Create a new profile", "Show recent logs", "Submit profile", "Exit"])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes, selects)
@@ -266,7 +270,7 @@ def test_wizard_show_recent_logs_empty(monkeypatch, tmp_path):
 
 def test_wizard_converts_docx_resume_to_pdf(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.docx", "", "65,000", ""])
-    confirms = iter([True, True, True, False, True, False, False])
+    confirms = iter([True, True, True, False, True, False, False, False])
     checkboxes = iter([["ats:greenhouse", "ats:ashby"], ["pdf", "csv"]])
     _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes)
     monkeypatch.setattr(cfg, "convert_to_pdf", lambda source, out=None: "out.pdf")
@@ -746,7 +750,7 @@ def test_merge_answers_drops_tracks_and_custom_when_cleared():
 
 def test_wizard_review_toggles_job_tracking(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
-    confirms = iter([False, True, False, True, False, False])
+    confirms = iter([False, True, False, True, False, False, False])
     checkboxes = iter([["ats:greenhouse"], ["pdf", "csv"]])
     selects = iter(
         ["Create a new profile", cfg.TOGGLE_TRACKING, "Submit profile", "Exit"]
@@ -762,7 +766,7 @@ def test_wizard_review_toggles_job_tracking(monkeypatch, tmp_path):
 
 def test_wizard_toggles_debug_and_saves_on_exit(monkeypatch, tmp_path):
     texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
-    confirms = iter([False, True, False, True, False, False, True])
+    confirms = iter([False, True, False, True, False, False, False, True])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(
         [
@@ -799,7 +803,7 @@ def test_wizard_scaling_editor_validates_and_saves(monkeypatch, tmp_path):
             "3",
         ]
     )
-    confirms = iter([False, True, False, True, False, False, True])
+    confirms = iter([False, True, False, True, False, False, False, True])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(
         [
@@ -876,7 +880,7 @@ def test_wizard_aggregator_editor_adds_custom_aggregator(monkeypatch, tmp_path):
             "SmartRecruiters.com",
         ]
     )
-    confirms = iter([False, True, False, True, False, False, True])
+    confirms = iter([False, True, False, True, False, False, False, True])
     checkboxes = iter([["ats:greenhouse"], ["pdf"]])
     selects = iter(
         [
@@ -1146,3 +1150,115 @@ def test_track_resume_path_prompt_shows_the_hint(monkeypatch):
     assert tracks == [
         {"name": "Tech Writer", "color": "navy", "path": "track.pdf", "route_keywords": []}
     ]
+
+
+def _portfolio_markdown(tmp_path, name="portfolio.md"):
+    path = tmp_path / name
+    path.write_text("# Case Study A\n", encoding="utf-8")
+    return path
+
+
+def test_answers_round_trip_the_portfolio_block(tmp_path):
+    path = _portfolio_markdown(tmp_path)
+    profile = {
+        "name": "Alice",
+        "portfolio": {"sources": [{"track": "Tech", "path": str(path)}], "pieces_per_card": 2},
+    }
+
+    answers = cfg._answers_from_profile(profile)
+    merged = cfg._merge_answers(profile, answers)
+
+    assert answers["portfolio"]["pieces_per_card"] == 2
+    assert merged["portfolio"]["sources"] == [{"track": "Tech", "path": str(path)}]
+    assert merged["portfolio"]["pieces_per_card"] == 2
+
+
+def test_merge_drops_the_portfolio_when_the_wizard_clears_it():
+    profile = {"name": "Alice", "portfolio": {"sources": [{"url": "https://example.com"}]}}
+    answers = cfg._answers_from_profile(profile)
+    answers["portfolio"] = {}
+
+    assert "portfolio" not in cfg._merge_answers(profile, answers)
+
+
+def test_merge_keeps_the_saved_portfolio_when_answers_omit_it():
+    profile = {"name": "Alice", "portfolio": {"sources": [{"url": "https://example.com"}]}}
+
+    merged = cfg._merge_answers(profile, {"name": "Alice"})
+
+    assert merged["portfolio"]["sources"][0]["url"] == "https://example.com"
+
+
+def test_merge_keeps_the_saved_portfolio_when_new_answers_do_not_validate(caplog):
+    stored = {"sources": [{"url": "https://example.com/old"}]}
+    profile = {"name": "Alice", "portfolio": stored}
+
+    with caplog.at_level(logging.WARNING, logger="sweepy.engine.config"):
+        merged = cfg._merge_answers(profile, {"name": "Alice", "portfolio": {"sources": [{"url": "nope"}]}})
+
+    assert merged["portfolio"]["sources"][0]["url"] == "https://example.com/old"
+    assert "Keeping the saved portfolio" in caplog.text
+
+
+def test_format_answer_summarizes_the_portfolio(tmp_path):
+    path = _portfolio_markdown(tmp_path)
+    step = next(step for step in cfg._build_steps() if step.key == "portfolio")
+
+    assert cfg._format_answer(step, None) == "(none)"
+    assert cfg._format_answer(
+        step, {"sources": [{"track": "Tech", "path": str(path)}, {"url": "https://example.com"}]}
+    ) == "Tech: portfolio.md, all tracks: https://example.com"
+
+
+def test_ask_portfolio_links_each_source_to_its_track(tmp_path, monkeypatch):
+    path = _portfolio_markdown(tmp_path)
+    confirms = iter([True])
+    texts = iter([str(path), "https://example.com/ux", "", "2"])
+    selects = iter(["Tech Writer", "All tracks (default)"])
+
+    monkeypatch.setattr(cfg.questionary, "confirm", lambda *a, **k: _stub(next(confirms)))
+    monkeypatch.setattr(cfg.questionary, "text", lambda *a, **k: _stub(next(texts)))
+    monkeypatch.setattr(cfg.questionary, "select", lambda *a, **k: _stub(next(selects)))
+
+    block = cfg._ask_portfolio(None, {"tracks": [{"name": "Tech Writer"}]})
+
+    assert block == {
+        "sources": [
+            {"path": str(path), "track": "Tech Writer"},
+            {"url": "https://example.com/ux"},
+        ],
+        "pieces_per_card": 2,
+    }
+
+
+def test_ask_portfolio_keeps_the_saved_sources(monkeypatch):
+    existing = {"sources": [{"url": "https://example.com"}], "pieces_per_card": 5}
+    monkeypatch.setattr(cfg.questionary, "confirm", lambda *a, **k: _stub(True))
+
+    assert cfg._ask_portfolio(existing, {}) == existing
+
+
+def test_ask_portfolio_returns_nothing_without_a_portfolio(monkeypatch):
+    monkeypatch.setattr(cfg.questionary, "confirm", lambda *a, **k: _stub(False))
+
+    assert cfg._ask_portfolio(None, {}) == {}
+
+
+def test_ask_portfolio_entry_rejects_a_missing_file(tmp_path, caplog):
+    with caplog.at_level(logging.WARNING, logger="sweepy.engine.config"):
+        assert cfg._ask_portfolio_entry(str(tmp_path / "gone.md")) is None
+    assert "No file at" in caplog.text
+
+
+def test_ask_portfolio_entry_rejects_an_unsupported_file(tmp_path, caplog):
+    path = tmp_path / "portfolio.psd"
+    path.write_text("x", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="sweepy.engine.config"):
+        assert cfg._ask_portfolio_entry(str(path)) is None
+    assert "Portfolio files must be one of" in caplog.text
+
+
+def test_ask_pieces_per_card_falls_back_to_the_default(monkeypatch):
+    monkeypatch.setattr(cfg.questionary, "text", lambda *a, **k: _stub(""))
+
+    assert cfg._ask_pieces_per_card({}) == 3

@@ -4,38 +4,123 @@ import html
 import logging
 import os
 import re
-from typing import List
+from typing import Dict, List, Optional
 
+from engine.portfolio import card_portfolio_fields, get_portfolio
 from engine.session import stable_id
 
 log = logging.getLogger("sweepy.engine.enrich")
 
 _DEFAULT_COLOR = "#1D4ED8"
 DEFAULT_DESCRIPTION_CHARS = 1000
+NO_CONCERNS = "No missing keywords found in the posting."
 
-_REQUIREMENT_HEADINGS = (
-    r"requirements",
-    r"qualifications",
-    r"what you'?ll bring",
-    r"what we'?re looking for",
-    r"you have",
-    r"you bring",
-    r"about you",
+_REQUIREMENT_MARKERS = (
+    "requirement",
+    "qualification",
+    "what you bring",
+    "what you ll bring",
+    "what we re looking for",
+    "who you are",
+    "you have",
+    "you bring",
+    "about you",
+    "must have",
 )
 
-_HEADING_RE = re.compile(
-    r"(?i)^\s*(?:#+\s*)?(" + "|".join(_REQUIREMENT_HEADINGS) + r")\s*:?\s*$"
+_DUTY_MARKERS = (
+    "about the role",
+    "the role",
+    "role overview",
+    "position overview",
+    "about the job",
+    "job description",
+    "what you ll do",
+    "what you ll be doing",
+    "responsibilities",
+    "day to day",
+    "role",
+)
+
+# A caption line such as "Day to day, this can mean:" ends a prose section.
+_CAPTION_RE = re.compile(r"^\s*(?:#+\s*)?[^.!?]{1,70}[:.]?\s*$")
+_LIST_ITEM_RE = re.compile(r"^(?:[\u2022*\-]|\d+[.)])\s+(.*)$")
+_NORM_RE = re.compile(r"[^a-z0-9]+")
+_CUE_RE = re.compile(
+    r"(?i)\b(experience (?:with|in|building)|proficien\w*|familiar\w*|knowledge of"
+    r"|ability to|must have|years of|background in|comfortable with)\b"
 )
 
 _TAG_RE = re.compile(r"<[^>]+>")
+_BLOCK_TAG_RE = re.compile(
+    r"(?i)</?(?:p|div|br|li|ul|ol|tr|td|blockquote|h[1-6]|section|article)\b[^>]*>"
+)
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _WS_RE = re.compile(r"\s+")
+_HSPACE_RE = re.compile(r"[ \t\u00a0]+")
+
+
+def _heading_text(line: str) -> str:
+    return _NORM_RE.sub(" ", line.lower()).strip()
+
+
+def _is_heading(line: str, markers: tuple) -> bool:
+    """Match a caption such as "What you'll bring" against normalized markers."""
+    if line.rstrip().endswith((".", "!", "?")):
+        return False
+    words = _heading_text(line)
+    if not words or len(words.split()) > 8:
+        return False
+    return any(marker in words for marker in markers)
+
+
+def _body_after(lines: List[str], markers: tuple, limit: int = 8) -> List[str]:
+    """Collect the lines under the first caption that matches *markers*."""
+    for index, line in enumerate(lines):
+        if not _is_heading(line, markers):
+            continue
+        body: List[str] = []
+        for candidate in lines[index + 1 :]:
+            if _is_heading(candidate, _REQUIREMENT_MARKERS + _DUTY_MARKERS):
+                break
+            if _CAPTION_RE.match(candidate):
+                break
+            body.append(candidate)
+            if len(body) >= limit:
+                break
+        if body:
+            return body
+    return []
+
+
+def _join_items(body: List[str]) -> str:
+    items = []
+    for line in body:
+        match = _LIST_ITEM_RE.match(line)
+        items.append((match.group(1) if match else line).strip())
+    return _WS_RE.sub(" ", " ".join(items)).strip()
 
 
 def _strip_html(text: str) -> str:
-    text = _TAG_RE.sub(" ", text or "")
-    text = html.unescape(text)
-    return _WS_RE.sub(" ", text).strip()
+    """Strip tags but keep line structure, so headings and bullets survive.
+
+    Postings arrive as one flattened paragraph once whitespace collapses, and
+    every section-aware scan then misses the parts that matter. Block-level tags
+    become line breaks here; ``_excerpt`` flattens the text again for display.
+    Boards that serve escaped markup need the entities decoded first, or the
+    decoded tags survive as literal text.
+    """
+    text = text or ""
+    for _ in range(2):
+        unescaped = html.unescape(text)
+        if unescaped == text:
+            break
+        text = unescaped
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = _BLOCK_TAG_RE.sub("\n", text)
+    text = _TAG_RE.sub(" ", text)
+    lines = [_HSPACE_RE.sub(" ", line).strip() for line in text.split("\n")]
+    return "\n".join(line for line in lines if line)
 
 
 def get_tracks(profile: dict) -> List[dict]:
@@ -114,11 +199,22 @@ def _excerpt(text: str, limit: int) -> str:
     return _trim(text, limit)
 
 
+def _sentences(text: str) -> List[str]:
+    return [s.strip() for s in _SENTENCE_RE.split(_WS_RE.sub(" ", text)) if s.strip()]
+
+
+def _role_body(text: str) -> str:
+    """Return the prose under a role caption, skipping the opening company pitch."""
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    return _join_items(_body_after(lines, _DUTY_MARKERS))
+
+
 def _summary(text: str) -> str:
+    """Summarize the posting from its role section, not from its opening pitch."""
     if not text:
         return ""
-    sentences = [s.strip() for s in _SENTENCE_RE.split(text) if s.strip()]
-    cleaned = [s.rstrip(".!?").strip() for s in sentences]
+    body = _role_body(text) or text
+    cleaned = [s.rstrip(".!?").strip() for s in _sentences(body)]
     summary = ". ".join(cleaned[:2])
     if summary and not summary.endswith((".", "!", "?")):
         summary += "."
@@ -126,24 +222,47 @@ def _summary(text: str) -> str:
 
 
 def _requirements(text: str) -> str:
+    """Pull requirements from anywhere in the posting, keeping the result short."""
     if not text:
         return ""
     lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
-    for i, line in enumerate(lines):
-        if _HEADING_RE.match(line) and i + 1 < len(lines):
-            body = " ".join(lines[i + 1 : i + 3])
-            return _trim(_WS_RE.sub(" ", body).strip())
-    inline = re.search(r"(?i)\b(requirements|qualifications)\s*:?\s+([A-Z].{0,300})", text)
+    section = _body_after(lines, _REQUIREMENT_MARKERS)
+    if section:
+        return _trim(_join_items(section))
+    inline = re.search(
+        r"\b(?i:requirements|qualifications)\s*:?\s+([A-Z][^\n]{0,300})", text
+    )
     if inline:
-        return _trim(inline.group(2).strip())
-    bullets = [ln.lstrip("•-*").strip() for ln in lines if ln.lstrip().startswith(("•", "-", "*"))]
-    if bullets:
-        return _trim(" ".join(bullets[:4]))
-    # No structured requirements found — return the first sentence as a fallback.
-    sentences = [s.strip() for s in _SENTENCE_RE.split(text) if s.strip()]
+        return _trim(inline.group(1).strip())
+    items = [m.group(1).strip() for m in map(_LIST_ITEM_RE.match, lines) if m]
+    if items:
+        return _trim(" ".join(items[:4]))
+    duties = _body_after(lines, _DUTY_MARKERS)
+    if duties:
+        return _trim(_join_items(duties))
+    cues = [
+        sentence
+        for sentence in _sentences(text)
+        if len(sentence) >= 40 and _CUE_RE.search(sentence)
+    ]
+    if cues:
+        return _trim(" ".join(cues[:2]))
+    sentences = _sentences(text)
     if sentences:
         return _trim(sentences[0])
     return _trim(text)
+
+
+def _concerns(job: dict) -> str:
+    """Name the posting keywords the resume misses; the only gap a keyword pass proves."""
+    missing = [
+        str(skill).strip()
+        for skill in job.get("missing_skills") or []
+        if str(skill).strip()
+    ]
+    if not missing:
+        return NO_CONCERNS
+    return f"Posting asks for {', '.join(missing)}, which the resume does not show."
 
 
 def _fmt_amount(value: float) -> str:
@@ -193,10 +312,17 @@ def _domain(job: dict, profile: dict) -> str:
     return str(domain_map.get(company, "") or "")
 
 
-def enrich_jobs(scored_jobs: List[dict], profile: dict) -> List[dict]:
+def enrich_jobs(
+    scored_jobs: List[dict],
+    profile: dict,
+    portfolio_cache: Optional[Dict[str, List[dict]]] = None,
+) -> List[dict]:
     """Convert scored jobs into canonical card records using deterministic fallbacks."""
     tracks = get_tracks(profile)
     description_limit = _description_limit(profile)
+    pieces_per_card = get_portfolio(profile)["pieces_per_card"]
+    if portfolio_cache is None:
+        portfolio_cache = {}
     cards = []
     for job in scored_jobs:
         title = str(job.get("title", "") or "")
@@ -234,6 +360,7 @@ def enrich_jobs(scored_jobs: List[dict], profile: dict) -> List[dict]:
             "requirements": _requirements(description),
             "description": _excerpt(description, description_limit),
             "alignment": job.get("playbook", "") or "",
+            "concerns": _concerns(job),
             "playbook": str(job.get("playbook", "") or ""),
             "comp": _comp(job),
             "min_amount": job.get("min_amount") or 0,
@@ -245,6 +372,13 @@ def enrich_jobs(scored_jobs: List[dict], profile: dict) -> List[dict]:
             "benefits": "Not disclosed",
             "page": 0,
             "page_theme": "",
+            **card_portfolio_fields(
+                profile, resume_track, portfolio_cache, pieces_per_card
+            ),
+            # An agent judgment survives a second pass over the same posting.
+            "portfolio_highlight": str(job.get("portfolio_highlight") or ""),
+            **({"portfolio_fit": job["portfolio_fit"]}
+               if job.get("portfolio_fit") is not None else {}),
         })
 
     cards.sort(key=lambda c: c["match_value"], reverse=True)

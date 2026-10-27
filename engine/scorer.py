@@ -380,6 +380,15 @@ def extract_resume_keywords(resume_path: str, must_have_skills: List[str]) -> Li
     return keywords
 
 
+def read_document_text(path: str) -> str:
+    """Return the plain text of a PDF or DOCX file.
+
+    Portfolio sources reuse the résumé reader so one parser handles every
+    candidate document.
+    """
+    return _read_resume_text(path)
+
+
 def _resume_signals(resume_path: str, must_have_skills: List[str]) -> Tuple[List[str], str]:
     """Return the résumé's keywords and its lower-cased text from one file read.
 

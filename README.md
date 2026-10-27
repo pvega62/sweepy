@@ -17,6 +17,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the current version and release history.
 - **Checks for duplicate postings across boards.** Matches normalized job title, company, and location, even when boards use different URLs. Pass `--no-dedupe` to keep every board's listing for one run.
 - **Skips postings you already saw.** A daily sweep reports new roles instead of yesterday's list. Sweepy suppresses reported postings for a four-day window. Pass `--include-seen` to bring them back for one run.
 - **Routes you to the right resume.** Sends each job to the resume track you wrote for that role, then labels the card with a color badge.
+- **Makes your portfolio part of every decision.** Point Sweepy at an online portfolio or a local PDF, Word, Markdown, text, or HTML file. Every card lists that portfolio's pieces. When you apply for more than one kind of role, keep one portfolio per resume track.
 - **Builds a report you can use.** Produces a card-per-page PDF with clickable links, plus CSV and JSON files for your own tracking.
 - **Turns the CSV into an application tracker.** The CSV ends with `date_applied`, `status`, `interview_stage`, `offer_amount`, `offer_date`, `follow_up_date`, `contact`, and `notes`. Fill them in through Excel, Google Sheets, or Notion. Sweepy copies your entries into later sweeps of the same profile. The PDF gives you one ranked reading list with apply links on each card. The spreadsheet keeps roles past the PDF card limit and records what you did about each one. Turn the columns off with `export.tracking: false`.
 
@@ -126,7 +127,7 @@ A sweep takes 30 to 90 seconds. Sweepy prints its progress as it works:
 Every run writes date-stamped files to the `results/` folder. Earlier reports stay in place.
 
 - **A PDF report.** One card per role, sorted by match score, with pay, benefits, and a link to apply.
-- **A CSV file.** Every card field, a 1,000-character posting excerpt, and eight job-tracking columns that Sweepy copies into later sweeps. Open it in Excel, Google Sheets, or Notion.
+- **A CSV file.** Every card field, a 1,000-character posting excerpt, and eight job-tracking columns that Sweepy copies into later sweeps. Open it in Excel, Google Sheets, or Notion. Sweepy reads each posting in full when it builds the card; the excerpt only shortens what the files show.
 - **A JSON file.** The same data in a format other tools can read.
 
 Open the [sample PDF](docs/sample_report.pdf), or view [page 1 as an image](docs/sample_report.png).
@@ -287,6 +288,29 @@ The orchestrator handles the rest. It dispatches by name and enforces the timeou
 Sweepy scores postings by shared vocabulary, and that scoring doesn't call a model or use the network. The same inputs produce the same score, which measures wording, not fit. The MCP server treats an agent assessment as the expected path.
 
 `run_sweep` doesn't call a model. It returns `assessment_mode: "agent"`, `assessment_required: true`, and `assessed_count: 0`. The workflow continues with `get_jobs`, an independent assessment of each role against the resume, `submit_judgments`, and `render_report`. Pass every judgment in one `judgments` list to keep a 24-role assessment to one call. Assessed cards show `NN% MATCH`. Unassessed cards keep `NN% KEYWORD OVERLAP`.
+
+Assess both sides of the case. `alignment` states the highlight, the strongest evidence that the candidate fits. `concerns` states what works against the candidate, such as a missing qualification, a tenure gap, or pay below the floor. The report prints the pair on one line under the requirements row, and the CSV gains a `concerns` column. A keyword-only run fills `concerns` from the posting keywords the resume misses.
+
+`submit_judgments` also takes `portfolio_highlight`. Pass the portfolio pieces for that posting, and the card prints them as **Highlight**. A card with no submitted highlight lists the pieces Sweepy found.
+
+## Portfolio support
+
+Sweepy reads a portfolio once per sweep and lists its pieces on every card. It collects the portfolio before it builds the profile. Give it an online URL or a local `.pdf`, `.docx`, `.md`, `.txt`, or `.html` file. Pass one entry per resume track when you target more than one role family.
+
+```yaml
+portfolio:
+  # One entry per resume track. An entry without `track` serves every track.
+  sources:
+    - track: "UX Writer Resume"
+      url: "https://example.com/work"
+    - track: "Technical Writer Resume"
+      path: "C:/portfolios/technical-writing.pdf"
+  pieces_per_card: 3
+```
+
+Sweepy fetches an online portfolio to read its headings and links. When a page blocks the request, the card keeps the link and skips the piece list. The PDF card shows the portfolio and its pieces. The CSV and JSON exports add `portfolio_url`, `portfolio_pieces`, and `portfolio_highlight`.
+
+To attach a portfolio to a saved profile, call `set_portfolio` from the MCP or answer the wizard's portfolio step. A headless setup accepts `--portfolio` and `--portfolio-track`.
 
 `render_report` takes a `playbook` argument for the closing strategy box. Write plain prose. Sweepy escapes ampersands and turns newlines into line breaks. `**bold**` renders as bold text, and angle brackets become plain text. Sweepy stores the playbook with the session, and a later render reuses it instead of the generated one. Starting a new sweep clears it.
 
