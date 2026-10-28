@@ -54,6 +54,8 @@ from engine.portfolio import (
     SUPPORTED_LABEL as PORTFOLIO_LABEL,
 )
 from engine.sweep_config import legacy_profile_notice, normalize_sources, validate_sources
+from engine.timefmt import DEFAULT_TIMEZONE as DEFAULT_FILENAME_TIMEZONE
+from engine.timefmt import resolve_timezone
 from engine.tracking import tracking_enabled
 from engine.updater import update_sweepy
 
@@ -882,6 +884,45 @@ def _ask_job_tracking(current=None):
             default=default,
         )
     )
+
+
+_TIMEZONE_CHOICES = [
+    ("System local time", "local"),
+    ("UTC", "UTC"),
+    ("US Eastern (America/New_York)", "America/New_York"),
+    ("US Central (America/Chicago)", "America/Chicago"),
+    ("US Mountain (America/Denver)", "America/Denver"),
+    ("US Pacific (America/Los_Angeles)", "America/Los_Angeles"),
+    ("Another zone (IANA name or ±HH:MM offset)", "__custom__"),
+]
+
+
+def _ask_timezone(current=None):
+    """Choose the clock behind report filenames, with a free-form fallback."""
+    stored = str(current or DEFAULT_FILENAME_TIMEZONE)
+    options = dict(_TIMEZONE_CHOICES)
+    picked = _ask(_select("Which clock should name your report files?", list(options)))
+    if picked is None:
+        return stored
+    value = options.get(picked, "__custom__")
+    if value != "__custom__":
+        return value
+    while True:
+        raw = _ask(
+            questionary.text(
+                "Timezone for report filenames (IANA name or ±HH:MM offset):",
+                default="" if stored in options.values() else stored,
+            )
+        )
+        if raw is None:
+            return stored
+        candidate = raw.strip() or DEFAULT_FILENAME_TIMEZONE
+        try:
+            resolve_timezone(candidate)
+        except ValueError as exc:
+            log.warning("%s", exc)
+            continue
+        return candidate
 
 
 def _ask_tracks(current=None):
@@ -1804,6 +1845,7 @@ def _answers_from_profile(profile_data: Dict) -> Dict:
         "must_have_skills": list(resume.get("must_have_skills") or []),
         "formats": formats,
         "job_tracking": tracking_enabled(export),
+        "timezone": export.get("timezone") or DEFAULT_FILENAME_TIMEZONE,
         "tracks": [dict(t) for t in (resume.get("tracks") or [])],
         "portfolio": copy.deepcopy(profile_data.get("portfolio") or {}),
         "debug": bool(profile_data.get("debug")),
@@ -1887,6 +1929,7 @@ def _merge_answers(profile_data: Dict, answers: Dict) -> Dict:
     export["format"] = ",".join(answers.get("formats") or ["pdf", "csv"])
     export.setdefault("output_dir", "results")
     export["tracking"] = bool(answers.get("job_tracking", True))
+    export["timezone"] = answers.get("timezone") or DEFAULT_FILENAME_TIMEZONE
     merged["export"] = export
 
     merged["debug"] = bool(answers.get("debug"))
@@ -1939,6 +1982,7 @@ _SCALING_CHOICES = [
     "Skip previously reported postings (history)",
     "History retention in days (history.retention_days)",
     f"{MENU_TRACKING} in the CSV (export.tracking)",
+    "Report filename timezone (export.timezone)",
 ]
 
 _AGGREGATOR_CHOICES = [
@@ -2354,6 +2398,16 @@ def _edit_scaling(profile_data: Dict) -> bool:
                 profile_data["export"] = export
                 changed = True
 
+        if action.startswith("Report filename timezone"):
+            export = dict(profile_data.get("export") or {})
+            zone = _ask_timezone(export.get("timezone") or DEFAULT_FILENAME_TIMEZONE)
+            if zone:
+                export.setdefault("format", "pdf,csv")
+                export.setdefault("output_dir", "results")
+                export["timezone"] = zone
+                profile_data["export"] = export
+                changed = True
+
     while True:
         history_cfg = profile_data.get("history") or {}
         history_state = (
@@ -2363,13 +2417,14 @@ def _edit_scaling(profile_data: Dict) -> bool:
         )
         log.info(
             "  Keyword weight %s | Max cards %s | Cards per page %s | Report style %s | "
-            "History %s | Tracking %s",
+            "History %s | Tracking %s | Filename timezone %s",
             resume.get("keywords_weight", 1.5),
             report.get("max_cards", 24),
             report.get("cards_per_page", 6),
             report.get("style", "cards"),
             history_state,
             "on" if tracking_enabled(profile_data.get("export") or {}) else "off",
+            (profile_data.get("export") or {}).get("timezone") or DEFAULT_FILENAME_TIMEZONE,
         )
         action = _menu(
             "Which scaling setting do you want to change?", _SCALING_CHOICES

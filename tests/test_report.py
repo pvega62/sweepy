@@ -259,6 +259,29 @@ def test_build_report_sets_page_fields(tmp_path):
     assert cards[0]["page_theme"].startswith("Page 1")
 
 
+def test_report_title_overrides_the_search_titles(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    profile = _profile(max_cards=1)
+    profile["search"]["titles"] = ["Technical Writer", "UX Writer", "Content Designer"]
+    profile["report"]["title"] = "Technical & UX Writing Openings"
+
+    build_report([_card(1)], path, profile)
+
+    text = _pages(path)[0][0]
+    assert "Technical & UX Writing Openings" in text
+    assert "Content Designer Openings" not in text
+
+
+def test_report_title_defaults_to_the_search_titles(tmp_path):
+    path = str(tmp_path / "r.pdf")
+    profile = _profile(max_cards=1)
+    profile["search"]["titles"] = ["Technical Writer", "UX Writer"]
+
+    build_report([_card(1)], path, profile)
+
+    assert "Technical Writer & UX Writer Openings" in _pages(path)[0][0]
+
+
 def test_export_to_png_single_page_stem(tmp_path):
     pdf = str(tmp_path / "r.pdf")
     build_report([_card(1), _card(2)], pdf, _profile(max_cards=2))

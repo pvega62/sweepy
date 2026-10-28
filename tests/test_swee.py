@@ -1,4 +1,5 @@
 import csv
+import datetime
 import os
 import sys
 import time
@@ -500,6 +501,91 @@ def test_pipeline_produces_timestamped_distinct_filenames(tmp_path, monkeypatch)
     assert first["reports"]["json"] != second["reports"]["json"]
     assert os.path.exists(first["reports"]["json"])
     assert os.path.exists(second["reports"]["json"])
+
+
+def test_result_stem_marks_only_mcp_runs():
+    plain = swee.result_stem("tech_writer")
+    marked = swee.result_stem("tech_writer", "mcp")
+
+    assert plain.startswith("tech_writer_")
+    assert "_mcp_" not in plain
+    assert marked.startswith("tech_writer_mcp_")
+
+
+def test_result_stamp_shifts_with_the_timezone():
+    utc = datetime.datetime.strptime(swee.result_stamp("UTC"), "%Y-%m-%d-%H%M%S")
+    eastern = datetime.datetime.strptime(swee.result_stamp("-05:00"), "%Y-%m-%d-%H%M%S")
+
+    assert datetime.timedelta(hours=4, minutes=59) <= utc - eastern <= datetime.timedelta(
+        hours=5, minutes=1
+    )
+
+
+def test_result_stem_prefers_a_supplied_timestamp():
+    assert swee.result_stem("tech_writer", "mcp", "UTC", "2026-10-27-235510") == (
+        "tech_writer_mcp_2026-10-27-235510"
+    )
+    assert swee.result_stem("tech_writer", timestamp="2026-10-27T23:55:10") == (
+        "tech_writer_2026-10-27-235510"
+    )
+
+
+def test_pipeline_stamps_reports_with_the_caller_timestamp(tmp_path, monkeypatch):
+    _mock_engine(monkeypatch, _jobs(1))
+    profile = _profile(str(tmp_path))
+    profile["history"] = {"enabled": False}
+
+    result = swee.run_sweep_pipeline(
+        profile_dict=profile, execution_method="mcp", timestamp="2026-10-27-235510"
+    )
+
+    assert os.path.basename(result["reports"]["json"]) == "test_mcp_2026-10-27-235510.json"
+
+
+def test_pipeline_rejects_an_unreadable_timestamp(tmp_path, monkeypatch):
+    _mock_engine(monkeypatch, _jobs(1))
+
+    with pytest.raises(ValueError) as excinfo:
+        swee.run_sweep_pipeline(
+            profile_dict=_profile(str(tmp_path)), timestamp="last tuesday"
+        )
+
+    assert "timestamp" in str(excinfo.value).lower()
+
+
+def test_pipeline_rejects_an_unknown_timezone_before_discovering(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        swee, "discover_jobs", lambda *a, **k: pytest.fail("discovery should not run")
+    )
+    profile = _profile(str(tmp_path))
+    profile["export"]["timezone"] = "Mars/Olympus"
+
+    with pytest.raises(ValueError):
+        swee.run_sweep_pipeline(profile_dict=profile)
+
+
+def test_pipeline_marks_mcp_result_filenames(tmp_path, monkeypatch):
+    _mock_engine(monkeypatch, _jobs(1))
+    profile = _profile(str(tmp_path))
+    profile["history"] = {"enabled": False}
+
+    result = swee.run_sweep_pipeline(profile_dict=profile, execution_method="mcp")
+
+    name = os.path.basename(result["reports"]["json"])
+    assert name.startswith("test_mcp_")
+    assert result["profile_stem"] == "test"
+
+
+def test_pipeline_keeps_plain_filenames_for_cli_runs(tmp_path, monkeypatch):
+    _mock_engine(monkeypatch, _jobs(1))
+    profile = _profile(str(tmp_path))
+    profile["history"] = {"enabled": False}
+
+    result = swee.run_sweep_pipeline(profile_dict=profile, execution_method="cli")
+
+    name = os.path.basename(result["reports"]["json"])
+    assert name.startswith("test_")
+    assert "_mcp_" not in name
 
 
 def test_get_dependency_versions_missing(monkeypatch):

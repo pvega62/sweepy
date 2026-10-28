@@ -106,6 +106,14 @@ def _platforms_label(cards: List[dict]) -> str:
 
 
 def _title_text(profile: dict) -> str:
+    """Return the report masthead, honoring an explicit ``report.title``.
+
+    A profile that searches a dozen titles would otherwise print all of them as the
+    masthead on every page.
+    """
+    override = str(((profile or {}).get("report") or {}).get("title") or "").strip()
+    if override:
+        return override
     titles = profile.get("search", {}).get("titles", []) or []
     label = " & ".join(str(t) for t in titles) if titles else "Job"
     return f"{label} Openings"

@@ -12,6 +12,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 from typing import Callable, Optional
 
+from engine import timefmt
 from engine.config import (
     DOCS_URL,
     last_profile_path,
@@ -63,6 +64,27 @@ _DEFAULT_PROFILE_CANDIDATES = (
     "profiles/paralegal_nyc.yaml",
     "config.sample.yaml",
 )
+
+
+def result_stamp(timezone_name: Optional[str] = None) -> str:
+    """The ``YYYY-MM-DD-HHMMSS`` stamp Sweepy writes into report filenames."""
+    return timefmt.stamp(timezone_name)
+
+
+def result_stem(
+    profile_stem: str,
+    execution_method: str = "direct",
+    timezone_name: Optional[str] = None,
+    timestamp: Optional[str] = None,
+) -> str:
+    """Build a report stem, marking an MCP-driven run with ``mcp``.
+
+    ``timestamp`` wins when a caller supplies one, which lets an assistant stamp a
+    report with the user's own clock instead of the server's.
+    """
+    marker = "mcp_" if execution_method == "mcp" else ""
+    stamp = timefmt.normalize_stamp(timestamp) or timefmt.stamp(timezone_name)
+    return f"{profile_stem}_{marker}{stamp}"
 
 
 def get_dependency_versions() -> str:
@@ -649,11 +671,13 @@ def run_sweep_pipeline(
     deduplicate: bool = True,
     include_seen: bool = False,
     execution_method: str = "direct",
+    timestamp: Optional[str] = None,
 ) -> dict:
     """
     Executes the Sweepy 5-stage pipeline.
     Accepts either a path to a profile YAML or a pre-loaded/in-memory configuration dictionary.
-    Returns a dictionary summarizing the sweep results, output paths, and top roles.
+    ``timestamp`` overrides the filename stamp, and ``export.timezone`` sets the clock behind
+    it. Returns a dictionary summarizing the sweep results, output paths, and top roles.
     """
     log_fn = log.info if verbose else (lambda *_: None)
 
@@ -694,6 +718,7 @@ def run_sweep_pipeline(
     include_hybrid = search.get("include_hybrid", True)
     min_salary = search.get("min_salary", 0)
     salary_from_description = bool(search.get("salary_from_description", True))
+    filter_titles = bool(search.get("filter_titles", False))
 
     resume = config.get("resume", {})
     resume_path = resume.get("path", "")
@@ -725,6 +750,9 @@ def run_sweep_pipeline(
     export = config.get("export", {})
     formats = [f.strip().lower() for f in export.get("format", "pdf,csv").split(",") if f.strip()]
     output_dir = export.get("output_dir", "results")
+    filename_timezone = export.get("timezone") or timefmt.DEFAULT_TIMEZONE
+    # Resolve now: a typo should fail before a five-minute scrape, not after it.
+    timefmt.resolve_timezone(filename_timezone)
     job_tracking = tracking_enabled(export)
 
     titles_display = ", ".join(titles) if titles else "All Titles"
@@ -758,7 +786,7 @@ def run_sweep_pipeline(
         titles, location, remote_only, include_hybrid, min_salary, platforms,
         sources_config=sources, runtime=runtime, cache=cache, circuit=circuit,
         skipped=skipped_sources, progress=progress, deduplicate=deduplicate,
-        salary_from_description=salary_from_description,
+        salary_from_description=salary_from_description, filter_titles=filter_titles,
     )
     source_jobs, source_counts = discover_sources(
         sources, titles, location, remote_only, include_hybrid, min_salary,
@@ -910,10 +938,10 @@ def run_sweep_pipeline(
     # [5/5] Generating reports
     _progress(5, 5, "Generating reports")
     log_fn("\n[5/5] Generating reports...")
-    today_str = datetime.date.today().isoformat()
-    utc_now = datetime.datetime.now(datetime.timezone.utc)
-    time_str = utc_now.strftime("%H%M%S")
-    base_output_path = os.path.join(output_dir, f"{profile_stem}_{today_str}-{time_str}")
+    base_output_path = os.path.join(
+        output_dir,
+        result_stem(profile_stem, execution_method, filename_timezone, timestamp),
+    )
     os.makedirs(output_dir, exist_ok=True)
 
     pdf_file = f"{base_output_path}.pdf"
@@ -997,6 +1025,7 @@ def run_sweep_pipeline(
         "cards": cards,
         "output_dir": os.path.realpath(output_dir),
         "profile": config,
+        "profile_stem": profile_stem,
         "reports": generated_reports,
         "skipped_sources": skipped_sources,
     }

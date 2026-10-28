@@ -29,6 +29,7 @@ from engine.sources import (
     load_workable_slugs,
 )
 from engine.sources._common import title_matches
+from engine.resolve import is_search_url, resolve_posting_url
 from engine.sweep_config import normalize_sources
 
 log = logging.getLogger("sweepy.engine.discovery")
@@ -300,6 +301,14 @@ def _frame_to_jobs(
         if filter_titles and not _matches_titles(title, titles or []):
             continue
 
+        # Google Jobs stores the search query as the posting URL, so the link opens a
+        # results page. Resolve it to the employer's own posting before the card exists.
+        search_url = url if is_search_url(url) else ""
+        if search_url:
+            resolved = resolve_posting_url(title, str(_first(record, "company") or ""))
+            if resolved:
+                url = resolved
+
         source = str(_first(record, "source", "site") or "Aggregator")
         board = str(_first(record, "site", "board") or source)
         platform = str(_first(record, "platform") or "") or classify_platform(
@@ -337,6 +346,7 @@ def _frame_to_jobs(
                 "id": str(_first(record, "id") or ""),
                 "platform": platform,
                 "url": url,
+                "url_unresolved": bool(search_url and url == search_url),
                 "apply_url": str(_first(record, "apply_url") or ""),
                 "title": title,
                 "company": str(_first(record, "company") or ""),
@@ -423,8 +433,14 @@ def discover_jobs(
     circuit: Optional[CircuitBreaker] = None,
     skipped: Optional[List[dict]] = None,
     salary_from_description: bool = True,
+    filter_titles: bool = False,
 ) -> Tuple[List[Dict], Dict[str, int]]:
-    """Scrape JobSpy boards per title through the adapter orchestrator."""
+    """Scrape JobSpy boards per title through the adapter orchestrator.
+
+    Board queries are fuzzy: a search for "Documentation Engineer" also returns plain
+    software engineers. Pass ``filter_titles`` to keep only postings whose title contains
+    one of the searched titles, which is what the ATS and engine readers already do.
+    """
     if platforms is None:
         platforms = {"greenhouse": True, "ashby": True, "lever": True, "workable": True, "aggregators": False}
     if isinstance(platforms, list):
@@ -499,6 +515,8 @@ def discover_jobs(
             include_hybrid=include_hybrid,
             min_salary=min_salary,
             salary_from_description=salary_from_description,
+            filter_titles=filter_titles,
+            titles=titles,
         ),
         enabled=deduplicate,
     )

@@ -719,7 +719,12 @@ def _rich_profile():
             "max_cards": 5,
             "destinations": ["D:/reports"],
         },
-        "export": {"format": "pdf,json", "output_dir": "out", "tracking": True},
+        "export": {
+            "format": "pdf,json",
+            "output_dir": "out",
+            "tracking": True,
+            "timezone": "America/New_York",
+        },
     }
 
 
@@ -735,6 +740,25 @@ def test_answers_round_trip_preserves_untouched_sections():
     assert merged["report"]["destinations"] == ["D:/reports"]
 
 
+def test_profile_timezone_defaults_to_local_when_absent():
+    answers = cfg._answers_from_profile({"name": "Alice"})
+    merged = cfg._merge_answers({"name": "Alice"}, answers)
+
+    assert answers["timezone"] == "local"
+    assert merged["export"]["timezone"] == "local"
+
+
+def test_wizard_timezone_answer_reaches_the_profile():
+    profile = _rich_profile()
+    answers = cfg._answers_from_profile(profile)
+    answers["timezone"] = "-05:00"
+
+    merged = cfg._merge_answers(profile, answers)
+
+    assert merged["export"]["timezone"] == "-05:00"
+    assert merged["export"]["tracking"] is True
+
+
 def test_merge_answers_drops_tracks_and_custom_when_cleared():
     profile = _rich_profile()
     answers = cfg._answers_from_profile(profile)
@@ -746,6 +770,56 @@ def test_merge_answers_drops_tracks_and_custom_when_cleared():
     assert "tracks" not in merged["resume"]
     assert "custom" not in merged["platforms"]
     assert merged["resume"]["synonyms"] == profile["resume"]["synonyms"]
+
+
+def test_wizard_scaling_editor_sets_the_report_timezone(monkeypatch, tmp_path):
+    texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", ""])
+    confirms = iter([False, True, False, True, False, False, False, True])
+    checkboxes = iter([["ats:greenhouse"], ["pdf"]])
+    selects = iter(
+        [
+            "Create a new profile",
+            "Submit profile",
+            "Adjust scoring and scaling",
+            "Report filename timezone (export.timezone)",
+            "US Eastern (America/New_York)",
+            cfg.BACK_LABEL,
+            "Exit",
+            "Overwrite profiles/alice_writer.yaml",
+        ]
+    )
+    _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes, selects)
+    monkeypatch.chdir(tmp_path)
+
+    path = cfg.run_wizard()
+    data = load_config(path)
+
+    assert data["export"]["timezone"] == "America/New_York"
+
+
+def test_wizard_scaling_editor_rejects_an_unknown_timezone(monkeypatch, tmp_path):
+    texts = iter(["Alice", "Writer", "NYC", "resume.pdf", "", "", "Mars/Olympus", "-05:00"])
+    confirms = iter([False, True, False, True, False, False, False, True])
+    checkboxes = iter([["ats:greenhouse"], ["pdf"]])
+    selects = iter(
+        [
+            "Create a new profile",
+            "Submit profile",
+            "Adjust scoring and scaling",
+            "Report filename timezone (export.timezone)",
+            "Another zone (IANA name or ±HH:MM offset)",
+            cfg.BACK_LABEL,
+            "Exit",
+            "Overwrite profiles/alice_writer.yaml",
+        ]
+    )
+    _install_wizard_stubs(monkeypatch, texts, confirms, checkboxes, selects)
+    monkeypatch.chdir(tmp_path)
+
+    path = cfg.run_wizard()
+    data = load_config(path)
+
+    assert data["export"]["timezone"] == "-05:00"
 
 
 def test_wizard_review_toggles_job_tracking(monkeypatch, tmp_path):

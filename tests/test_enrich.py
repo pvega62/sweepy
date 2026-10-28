@@ -86,6 +86,19 @@ def test_enrich_no_department_yields_empty_domain():
     assert cards[0]["domain"] == ""
 
 
+def test_enrich_flags_a_card_that_carries_no_posting_body():
+    empty = enrich_jobs([_job(description="")], _profile())[0]
+    described = enrich_jobs([_job(description="Requirements text.")], _profile())[0]
+
+    assert empty["needs_description"] is True
+    assert described["needs_description"] is False
+
+
+def test_enrich_unescapes_board_entities_in_the_title():
+    card = enrich_jobs([_job(title="Technical Writer &amp; Editor &#x2014; Remote")], _profile())[0]
+    assert card["title"] == "Technical Writer & Editor \u2014 Remote"
+
+
 def test_enrich_comp_not_disclosed():
     cards = enrich_jobs([_job(min_amount=0, max_amount=0)], _profile())
     assert cards[0]["comp"] == "Not disclosed"

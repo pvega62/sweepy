@@ -92,6 +92,17 @@ after editing the configuration.
 
 - By default, do not stop at keyword scores and do not wait for the user to request the
   LLM boost. Call `get_jobs` to inspect the available details for relevant roles.
+- Judge the resume document, not the profile. `get_jobs` returns `resume_documents` with
+  the parsed text of every track. The profile's `must_have_skills` and `synonyms` only
+  feed the deterministic keyword pass, so scoring from them measures the YAML instead of
+  the candidate. Read the file the way a recruiter reads it: transferable skills, scope
+  and seniority per bullet, domain, tools, and outcomes.
+- Score the resume the way the posting's applicant tracking system parses it. A term the
+  parser can read in a standard Experience or Skills section counts as evidence. The same
+  term inside a table, header, footer, image, or two-column sidebar may never reach a
+  person, so weigh it lower. Name the ATS family when the apply URL reveals it (Workday,
+  Greenhouse, Lever, Ashby, iCIMS, Taleo, Workable, SmartRecruiters) and say in
+  `concerns` what that parser would lose.
 - Compare each assessable role with the candidate's resume and stated preferences. Submit
   an independent `match_pct` and evidence-grounded card fields through `submit_judgments`.
   Never copy the deterministic overlap score into `match_pct` or invent unsupported job

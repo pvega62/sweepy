@@ -325,7 +325,9 @@ def enrich_jobs(
         portfolio_cache = {}
     cards = []
     for job in scored_jobs:
-        title = str(job.get("title", "") or "")
+        # Boards double-escape titles ("Technical Writer &amp; …", "&#x2014;"), and the
+        # card prints the title verbatim.
+        title = html.unescape(str(job.get("title", "") or ""))
         raw_description = job.get("description", "") or ""
         description = _strip_md(_strip_html(raw_description))
         has_extended = (job.get("badge", "Slate") == "Amber")
@@ -359,6 +361,11 @@ def enrich_jobs(
             "summary": _summary(description),
             "requirements": _requirements(description),
             "description": _excerpt(description, description_limit),
+            # A board that returns no body leaves nothing to score or judge. The flag
+            # lets the calling agent fetch the posting itself and supply the text.
+            "needs_description": not bool(description.strip()),
+            # A search-engine link is not a posting: the agent cannot read it, so say so.
+            "url_unresolved": bool(job.get("url_unresolved") or False),
             "alignment": job.get("playbook", "") or "",
             "concerns": _concerns(job),
             "playbook": str(job.get("playbook", "") or ""),

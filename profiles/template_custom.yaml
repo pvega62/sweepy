@@ -221,3 +221,8 @@ export:
   # Characters of posting text saved in the CSV and JSON. Sweepy cuts on a
   # sentence boundary. Set to 0 to keep the whole posting.
   description_chars: 1000
+
+  # Clock behind the date and time in each report filename. "local" follows this
+  # machine, "UTC" pins Coordinated Universal Time, and an IANA name such as
+  # "America/New_York" or an offset such as "-05:00" picks another zone.
+  timezone: "local"

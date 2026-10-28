@@ -69,6 +69,11 @@ verification and coverage where its host provides search tools:
   posting against the user's titles, location, workplace preferences, salary floor,
   must-have skills, and resume. Correct deterministic match scores only with an
   independent, evidence-based `submit_judgments` assessment.
+- A card that reports `needs_description: true` arrived without a posting body, usually
+  from Built In, Google Jobs, or Apple. Fetch the posting yourself and pass the text to
+  `submit_judgments` as `description` before judging it. Calling `get_jobs` with
+  `needs_description=true` lists those cards on their own, so none of them silently
+  disappear from the review.
 - When the host provides web or search tools, use them to verify promising listings
   against employer career pages or the linked ATS, and search for relevant roles that
   Sweepy missed. Use `import_jobs` to add only verified, non-duplicate postings to the
@@ -96,6 +101,7 @@ Builds and saves a YAML configuration profile in the `profiles/` directory.
   - `remote_only`: set `True` if the candidate accepts only remote roles. Defaults to `False`.
   - `include_hybrid`: set `True` to include hybrid roles alongside remote or on-site roles. Defaults to `True`.
   - `min_salary`: lowest acceptable base salary as an integer (such as `90000`). Use `0` if unconstrained.
+  - `filter_titles`: set `True` to keep only aggregator postings whose title contains one of the searched titles. Board queries are fuzzy, so a `Documentation Engineer` search also returns plain software engineers. The ATS and engine readers already filter this way; JobSpy does not unless this is on. Defaults to `False`.
   - `must_have_skills`: optional list of mandatory keywords to boost ranking (such as `["API Documentation", "Markdown"]`).
   - `platforms`: optional dictionary enabling or disabling scrapers (such as `{"greenhouse": True, "ashby": True, "lever": True, "workable": True, "aggregators": False}`).
   - `sources_config`: optional dictionary merged into the profile's `sources` block (such as `{"enabled": ["jobspy", "openroles"], "openroles": {"companies": ["figma"]}}`). Every enabled engine validates before the file is written, so a bad block returns an error instead of a broken profile.
@@ -131,11 +137,14 @@ A live sweep needs minutes of board scraping, so the pipeline runs on a backgrou
 - **Repeated calls.** Calling `run_sweep` again with the same profile while a sweep is running rejoins that job instead of starting a second scrape.
 - **Default profile.** When `profile_path` is omitted, the sweep uses the last saved profile, then the newest profile in `profiles/`, then `profiles/custom_profile.yaml`, `profiles/paralegal_nyc.yaml`, and `config.sample.yaml`. A profile saved by `create_profile` becomes the last saved profile.
 - **Previously seen postings.** The sweep skips postings recorded in an earlier run and reports `previously_seen_count` and `new_count`. Pass `include_seen=true`, or set `history.enabled: false` in the profile, to report every posting.
+- **Filename stamp.** Pass `timestamp` as `YYYY-MM-DD-HHMMSS` (or ISO 8601) to name the artifacts with the user's local time. Read that clock from the conversation. Without it, the stamp follows the profile's `export.timezone`, which defaults to `local`.
 
 Every MCP sweep enables a timestamped debug log and returns its path in `debug_log`. The log records the pipeline stages and source diagnostics without writing to the MCP stdout stream.
 Each sweep log also records its execution method as `wizard`, `cli`, or `mcp`.
 
 Enabled engines run concurrently behind one adapter, so the sweep takes about as long as the slowest engine. A single engine that times out or fails does not fail the call; report `skipped_sources` to the user when it comes back non-empty, naming the engine and the reason (`timeout`, `circuit_open`, or the error text).
+
+Aggregator boards that hand back a search query instead of a posting URL are resolved before the card is built. `engine/resolve.py` probes the employer's Greenhouse, Ashby, Lever, and Workable boards with a title match, and the card then carries the real posting link. A row that cannot be resolved keeps its search link and reports `url_unresolved: true`, so `get_jobs` and the report never present a search page as an application link.
 
 When `create_profile` receives no `sources_config`, it enables the built-in engines
 and every installed optional engine whose default configuration passes preflight.
@@ -189,7 +198,10 @@ Returns the card records held in the current sweep session, ranked by match.
   - `profile_stem`: optional profile identifier to load a persisted session from disk.
   - `results_dir`: directory holding `report_session.json`. Defaults to `"results"`.
   - `limit`: optional number of cards to return (omit to return all).
+  - `needs_description`: optional filter. `true` returns only cards whose posting body is missing, `false` only cards that carry one.
+- **Unreadable cards.** Some boards (Built In, Google Jobs, Apple) return a title and URL with no posting body. Those cards report `needs_description: true`, score low on overlap because a title cannot state requirements, and sort last. The payload reports `needs_description_count`, so the assessment step knows how many exist. Read the posting URL yourself, then pass the text to `submit_judgments` as `description`. That clears the flag and gives the report real requirement text. Never present an unreadable card as a match without doing this.
 - **Portfolio fields.** Each card reports `portfolio_url`, `portfolio_path`, `portfolio_pieces`, `portfolio_fit`, and `portfolio_highlight`. `portfolio_pieces` comes from the portfolio for the card's resume track, and `portfolio_fit` carries the agent's coverage score once submitted. The payload also reports `portfolio_configured`, `portfolio_sources`, and `portfolio_guidance`.
+- **Resume documents.** The payload reports `resume_documents`, one entry per resume file with the tracks that use it and the parsed text, plus `resume_default_path`, `resume_configured`, and `resume_guidance`. Judge the parsed text, never the profile's `must_have_skills` or `synonyms`, which only feed the deterministic keyword pass. Read the document the way a recruiter reads it: transferable skills, scope and seniority per bullet, domain, tools, and the outcomes each line proves. Then score it the way the posting's applicant tracking system parses it. A term the parser can read in a standard Experience or Skills section counts as evidence; the same term inside a table, header, footer, image, or two-column sidebar may never reach a person, so weigh it lower. Name the ATS family when the apply URL reveals it, and record in `concerns` what that parser would lose.
 
 ### 8. `submit_judgments`
 Overrides a job's deterministic card fields with LLM-supplied judgment.
@@ -198,7 +210,7 @@ Overrides a job's deterministic card fields with LLM-supplied judgment.
   `domain`, `summary`, `requirements`, `alignment`, `concerns`, or `has_extended_response`.
 - **Key parameters**:
   - `job_id`: stable job id returned by `run_sweep` or `get_jobs`.
-  - `match_pct`: LLM-assessed match percentage (0-100). Set this only after independently comparing the candidate's resume and preferences with available job evidence. Do not reuse the deterministic keyword-overlap score. Supplying it flips the report label from `KEYWORD OVERLAP` to `MATCH` for that card. It measures resume and experience fit against the bar the posting states; keep portfolio coverage in `portfolio_fit` instead of folding it in.
+  - `match_pct`: LLM-assessed match percentage (0-100). Set this only after independently comparing the candidate's resume and preferences with available job evidence. Score the parsed resume text from `get_jobs.resume_documents`, not the profile's keyword list. Weigh transferable skills the way a recruiter would, then score the file the way the posting's ATS parses it: a term in a standard Experience or Skills section counts, while the same term inside a table, header, footer, image, or two-column sidebar may never reach a person and weighs less. Do not reuse the deterministic keyword-overlap score. Supplying it flips the report label from `KEYWORD OVERLAP` to `MATCH` for that card. It measures resume and experience fit against the bar the posting states; keep portfolio coverage in `portfolio_fit` instead of folding it in.
   - `portfolio_fit`: how well the track's portfolio covers what the posting asks for (0-100). The report prints it beside `match_pct`, so the resume case and the sample case stay separate and auditable. Score it against the artifacts the posting names: 90-100 for the same artifact in the same domain, 50-69 when only a transferable artifact exists, and below 30 when the portfolio holds no sample of what is asked. Leave it unset when the card has no portfolio.
   - `alignment`: the highlight. State the strongest evidence that the candidate fits and the move that uses it.
   - `concerns`: what works against the candidate. Name unmet requirements, seniority or tenure gaps, domain mismatches, on-site expectations, or pay below the floor, and cite the posting text. Write `None identified` only when the posting states no real obstacle. The report renders this as **Working Against You**, and it gives the reader the counterweight to the highlight.
@@ -209,6 +221,10 @@ Overrides a job's deterministic card fields with LLM-supplied judgment.
     plain text. Read `portfolio_pieces` from the card and choose the one to three pieces
     that fit the posting. Leave it unset when the card has no portfolio, and when the
     posting states no portfolio requirement.
+  - `description`: the posting body you read from a card flagged `needs_description`.
+    Supplying it clears the flag, so the card stops sorting as unreadable and the report
+    prints the real requirement text. Pass `summary` and `requirements` too when the
+    derived rows should match what you read.
 
 ### 9. `import_jobs`
 Appends agent-found jobs (canonical card schema) into the current session.
@@ -225,7 +241,8 @@ Renders the cards PDF from the current session, writing through the sandbox.
 - **Key parameters**:
   - `profile_stem`: optional profile identifier to load a persisted session from disk.
   - `results_dir`: results directory. Defaults to `"results"`.
-  - `output_filename`: optional explicit output PDF path (must stay inside the workspace).
+  - `output_filename`: optional explicit output PDF path (must stay inside the workspace). When omitted, Sweepy writes `{profile_stem}_mcp_{YYYY-MM-DD-HHMMSS}.pdf` into the results directory, mirroring the CLI's dated report names with an `mcp` marker.
+  - `timestamp`: the user's local time for that default filename, as `YYYY-MM-DD-HHMMSS` or ISO 8601. It applies only when `output_filename` stays empty.
   - `playbook`: optional plain-text strategy note. Sweepy escapes ampersands and angle brackets, converts newlines to line breaks, and renders `**bold**`. The note is saved with the session, so a later call without it reuses the saved text. Empty with nothing saved generates a deterministic playbook.
 
 Returns `pdf_report`, `pages`, `card_count`, and `playbook_saved`.
@@ -283,7 +300,7 @@ Call `run_sweep` with the profile path. Note to the user that live board scrapin
 
 When the response reads `sweep_status: "running"`, call `get_sweep_status` with the returned `job_id` and repeat until it reads `completed`. Report the step label while you wait so the user sees progress instead of a stalled request.
 
-For the default workflow, call `get_jobs` and inspect the available details for the roles. Compare each assessable role with the candidate's resume and preferences, then call `submit_judgments` with an independently determined `match_pct` and evidence-grounded summary, requirements, alignment, and concerns. Assess all relevant cards returned by `get_jobs`; do not copy keyword scores or fabricate missing details. Every judgment states both sides: `alignment` holds the highlight that favors the candidate, and `concerns` holds the obstacle that works against them. A card with a highlight and no stated obstacle reads as a sales pitch, so name the gap even when the fit is strong. If evidence is insufficient, say so and retain the keyword-overlap label for those roles. Call `render_report` after submitting judgments.
+For the default workflow, call `get_jobs` and inspect the available details for the roles. Read `resume_documents` in that payload, which holds the parsed text of each resume track, and judge that text instead of the profile's `must_have_skills` and `synonyms`. Those keywords only feed the deterministic pass, so scoring from them measures the YAML, not the candidate. Compare each assessable role with the resume and preferences, then call `submit_judgments` with an independently determined `match_pct` and evidence-grounded summary, requirements, alignment, and concerns. Read the resume the way a recruiter reads it, including transferable skills, the scope and seniority behind each bullet, domain, tools, and outcomes. Score the file the way the posting's applicant tracking system parses it: evidence in a standard Experience or Skills section counts, while the same term inside a table, header, footer, image, or two-column sidebar may never reach a person and weighs less. Name the ATS family when the apply URL reveals it, and record in `concerns` what that parser would lose. Assess all relevant cards returned by `get_jobs`; do not copy keyword scores or fabricate missing details. Every judgment states both sides: `alignment` holds the highlight that favors the candidate, and `concerns` holds the obstacle that works against them. A card with a highlight and no stated obstacle reads as a sales pitch, so name the gap even when the fit is strong. If evidence is insufficient, say so and retain the keyword-overlap label for those roles. Call `render_report` after submitting judgments.
 
 Send the whole assessment as one `judgments` list, with a `job_id` and `match_pct` per entry, so 24 roles cost one call instead of 24. `run_sweep` reports `assessment_mode` and `assessed_count`; the default `agent` mode makes `render_report` refuse a mixed report and return the unassessed job ids. `report.assessment: keyword` restores keyword-only reports, and `SWEEPY_REQUIRE_JUDGMENTS=1` extends the gate to every profile and to `export_report`.
 
@@ -295,7 +312,7 @@ Format match results using markdown tables and structured lists:
 - Provide active Markdown links to each live job posting.
 - Show company name, location, and workplace model (Remote, Hybrid, On-site).
 - Include posted salary ranges when detected.
-- Highlight candidate strengths and résumé keywords that triggered the match.
+- Highlight candidate strengths and résumé keywords that triggered the match. Name the transferable skills the recruiter would credit, not only the words the posting repeats.
 - State what works against the candidate on each posting. Pair the highlight with the specific obstacle, such as a missing requirement, a tenure gap, or a pay band below the floor.
 - Surface strategic playbook recommendations (such as recommended portfolio samples or talking points).
 - State the portfolio pieces you chose for each role. The card reports them as `portfolio_highlight`.
@@ -330,7 +347,7 @@ The launchpad shows six tiles:
 - **Launch Sweep**: run your job search now
 - **Build Profile**: set up your job search
 - **Load Profile**: open a search you saved
-- **Sweep Settings**: change ranking, cards, and history
+- **Sweep Settings**: change ranking, cards, history, and the report filename timezone
 - **Sweepy's Toolbox**: profile edits, logs, and help
 - **Exit Sweepy**: save changes and close
 

@@ -63,10 +63,12 @@ with contextlib.redirect_stdout(sys.stderr):
     from engine.pdf_builder import build_pdf
     from engine.portfolio import normalize_portfolio, portfolio_summary
     from engine.report import build_report
+    from engine.scorer import read_document_text
     from engine.session import SweepSession, stable_id
     from engine.sweep_config import default_engine_config, normalize_sources, validate_sources
+    from engine.timefmt import normalize_stamp
     from engine.tracking import load_previous, tracking_enabled
-    from swee import run_sweep_pipeline
+    from swee import result_stem, run_sweep_pipeline
 
 _SERVER_INSTRUCTIONS = (
     "Sweepy matches job postings against a candidate's resume and portfolio. "
@@ -78,7 +80,16 @@ _SERVER_INSTRUCTIONS = (
     "plus `portfolio_pieces`. Choose the pieces that best fit each role and submit them with "
     "submit_judgments(portfolio_highlight=...) before render_report, so the report and the "
     "exports name the pieces to send. A card with no portfolio carries empty portfolio "
-    "fields, and that is not a failure."
+    "fields, and that is not a failure. Score each role against the candidate's actual "
+    "resume, not the profile's keyword list: get_jobs returns `resume_documents` with the "
+    "parsed text of every resume track, so read that text, weigh transferable skills the "
+    "way a recruiter would, and score match_pct the way the posting's ATS parses the file. "
+    "A term a parser can read in a standard Experience or Skills section outranks the same "
+    "term buried in a table, header, or sidebar. State the resulting obstacle in concerns. "
+    "Stamp the artifacts with the user's clock: pass `timestamp` as YYYY-MM-DD-HHMMSS to "
+    "run_sweep and render_report, using the local time you already know from the "
+    "conversation, so each filename carries the user's date and time instead of the "
+    "server's."
 )
 
 mcp = FastMCP("sweepy", instructions=_SERVER_INSTRUCTIONS)
@@ -94,6 +105,8 @@ _EXPECTED = (FileNotFoundError, ValueError, IsADirectoryError, PermissionError)
 _session = SweepSession()
 _session_profile: dict = {}
 _session_dir: Optional[str] = None
+# The stem of the profile behind the session, so a rendered report keeps the sweep's name.
+_session_stem: Optional[str] = None
 # The agent's strategy text, kept with the session so a re-render does not drop it.
 _session_playbook: str = ""
 # Remembers the history bucket of the last sweep so clear_history() needs no arguments.
@@ -165,11 +178,11 @@ def _default_profile_path(profile_data: dict) -> str:
     return os.path.join("profiles", f"{safe_name}_{safe_title}.yaml")
 
 
-_RESULT_STAMP = re.compile(r"_\d{4}-\d{2}-\d{2}-\d{6}$")
+_RESULT_STAMP = re.compile(r"(?:_mcp)?_\d{4}-\d{2}-\d{2}-\d{6}$")
 
 
 def _profile_stem_from_result(stem: str) -> str:
-    """Drop the ``_YYYY-MM-DD-HHMMSS`` stamp from a result file stem."""
+    """Drop the ``_YYYY-MM-DD-HHMMSS`` stamp, and any ``_mcp`` marker, from a result stem."""
     return _RESULT_STAMP.sub("", stem)
 
 
@@ -368,6 +381,86 @@ def _normalize_portfolio_block(
     return normalize_portfolio(raw, track_names)
 
 
+# One parsed resume per file, keyed by (path, mtime), so calling get_jobs twice does
+# not re-parse the same PDF.
+_RESUME_TEXT_CACHE: dict = {}
+# A resume runs two pages at most; the cap only guards against a mislabeled document.
+_RESUME_TEXT_LIMIT = 12000
+
+_RESUME_GUIDANCE = (
+    "Read `resume_documents[].text`, the parsed resume, before you score anything. The "
+    "profile's `must_have_skills` and `synonyms` only drive the deterministic keyword "
+    "pass, so judging from them measures the YAML instead of the candidate. Judge the "
+    "document a recruiter reads: transferable skills, the scope and seniority behind each "
+    "bullet, domain, tools, and the outcome every line proves. Then score it the way the "
+    "posting's applicant tracking system parses it. A term the parser can read inside a "
+    "standard Experience or Skills section counts as evidence; the same term inside a "
+    "header, footer, image, table, or two-column sidebar may never reach a person, so "
+    "weigh it lower. Name the ATS family when the apply URL reveals it (Workday, "
+    "Greenhouse, Lever, Ashby, iCIMS, Taleo, Workable, SmartRecruiters) and say in "
+    "`concerns` when a parser would lose part of the resume."
+)
+
+
+def _resume_text(path: str) -> str:
+    """Return the plain text of a resume file, cached by path and modification time."""
+    if not path:
+        return ""
+    try:
+        stamp = os.path.getmtime(path)
+    except OSError:
+        return ""
+    cached = _RESUME_TEXT_CACHE.get(path)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    try:
+        text = read_document_text(path)
+    except Exception as exc:
+        log.warning("Could not read resume %r: %s", path, exc)
+        text = ""
+    text = (text or "").strip()
+    if len(text) > _RESUME_TEXT_LIMIT:
+        text = text[:_RESUME_TEXT_LIMIT].rstrip() + "\n[...truncated...]"
+    _RESUME_TEXT_CACHE[path] = (stamp, text)
+    return text
+
+
+def _resume_payload(profile: Optional[dict] = None, include_text: bool = True) -> dict:
+    """Hand the agent the resume files, so judgment reads the document itself.
+
+    Tracks that share a file share one entry. Sending the parsed text keeps the
+    assessment grounded in the real candidate document even when the caller has no
+    PDF reader of its own.
+    """
+    block = ((profile if profile is not None else _session_profile) or {}).get("resume") or {}
+    default_path = str(block.get("path") or "")
+    documents: dict = {}
+    for track in block.get("tracks") or []:
+        path = str(track.get("path") or default_path)
+        if not path:
+            continue
+        document = documents.setdefault(path, {"path": path, "tracks": []})
+        name = str(track.get("name") or "").strip()
+        if name and name not in document["tracks"]:
+            document["tracks"].append(name)
+    if not documents and default_path:
+        documents[default_path] = {"path": default_path, "tracks": []}
+
+    entries = []
+    for document in documents.values():
+        entry = dict(document)
+        if include_text:
+            entry["text"] = _resume_text(document["path"])
+        entries.append(entry)
+
+    return {
+        "resume_configured": bool(entries),
+        "resume_default_path": default_path,
+        "resume_documents": entries,
+        "resume_guidance": _RESUME_GUIDANCE,
+    }
+
+
 def _latest_sweep_json(results_dir: str, profile_stem: Optional[str]) -> Optional[str]:
     pattern = os.path.join(results_dir, f"{profile_stem}_*.json" if profile_stem else "*.json")
     matches = [p for p in glob.glob(pattern) if not p.endswith("_export.json")]
@@ -393,6 +486,7 @@ def _persist_session(results_dir: Optional[str]) -> None:
     try:
         payload = {
             "profile": _session_profile,
+            "profile_stem": _session_stem,
             "jobs": _session.all(),
             "playbook": _session_playbook,
         }
@@ -406,6 +500,7 @@ def _persist_session(results_dir: Optional[str]) -> None:
 def _load_session(results_dir: str) -> bool:
     """Load a persisted session into the in-memory store. Returns False if absent."""
     global _session, _session_profile, _session_playbook
+    global _session_stem
     path = _session_path(results_dir)
     if not os.path.exists(path):
         return False
@@ -416,6 +511,7 @@ def _load_session(results_dir: str) -> bool:
         _session.set_many(payload.get("jobs", []) or [])
         _session_profile = payload.get("profile", {}) or {}
         _session_playbook = str(payload.get("playbook") or "")
+        _session_stem = payload.get("profile_stem") or None
         return True
     except (OSError, ValueError):
         log.warning("Could not load session from %s", path)
@@ -436,6 +532,21 @@ def _sorted_cards() -> List[dict]:
     cards = _session.all()
     cards.sort(key=lambda c: (c.get("rank", 0) if c.get("rank") else float("inf")))
     return cards
+
+
+def _report_cards(cards: List[dict], profile: Optional[dict]) -> List[dict]:
+    """Return the cards a rendered report prints, honoring ``report.max_cards``.
+
+    ``build_report`` caps its story at ``max_cards`` (24 by default, no cap at zero),
+    so an assessment gate that counted every card would demand judgments for roles the
+    report never prints.
+    """
+    raw = ((profile or {}).get("report") or {}).get("max_cards")
+    try:
+        limit = 24 if raw in (None, "") else int(raw)
+    except (TypeError, ValueError):
+        limit = 24
+    return list(cards) if limit <= 0 else list(cards)[:limit]
 
 
 _ASSESSMENT_MODES = ("agent", "keyword")
@@ -468,13 +579,20 @@ def _unassessed(cards: List[dict]) -> List[dict]:
     return [card for card in cards if card.get("match_kind") != "match"]
 
 
+def _needs_description(card: dict) -> bool:
+    """True when the card carries no posting text for the caller to read."""
+    if "needs_description" in card:
+        return bool(card.get("needs_description"))
+    return not str(card.get("description") or "").strip()
+
+
 def _assessment_error(cards: List[dict], tool_name: str) -> Optional[str]:
     """Return an error payload when unassessed cards block a report."""
     pending = _unassessed(cards)
     if not pending:
         return None
     return _err(
-        f"{tool_name} needs an agent assessment first. {len(pending)} of {len(cards)} cards "
+        f"{tool_name} needs an agent assessment first. {len(pending)} of {len(cards)} report cards "
         "still carry keyword overlap, not a match score. Call get_jobs, assess each role "
         "against the resume, then submit_judgments before rendering. Set "
         "report.assessment: keyword in the profile to keep keyword-only reports.",
@@ -512,12 +630,14 @@ class _SweepJob:
         deduplicate: bool,
         include_seen: bool,
         debug_log: Optional[str],
+        timestamp: Optional[str] = None,
     ):
         self.id = uuid.uuid4().hex[:12]
         self.profile_path = profile_path
         self.deduplicate = deduplicate
         self.include_seen = include_seen
         self.debug_log = debug_log
+        self.timestamp = timestamp
         self.status = "running"
         self.result: Optional[dict] = None
         self.error: Optional[str] = None
@@ -553,11 +673,13 @@ def _prune_sweep_jobs() -> None:
 def _apply_sweep_result(job: "_SweepJob") -> None:
     """Adopt a finished job's cards as the live session so later tools see them."""
     global _session, _session_profile, _session_dir, _last_history, _session_playbook
+    global _session_stem
     results = job.result or {}
     _session = SweepSession()
     _session.set_many(results.get("cards", []) or [])
     _session_profile = results.get("profile", {}) or {}
     _session_dir = results.get("output_dir")
+    _session_stem = results.get("profile_stem")
     # A new sweep replaces every card, so the previous strategy text no longer applies.
     _session_playbook = ""
     scope = results.get("history_scope")
@@ -580,6 +702,7 @@ def _run_sweep_job(job: "_SweepJob") -> None:
                 deduplicate=job.deduplicate,
                 include_seen=job.include_seen,
                 execution_method="mcp",
+                timestamp=job.timestamp,
             )
         # Adopt the cards before announcing completion so a waiting tool call
         # never reads an empty session.
@@ -603,6 +726,7 @@ def _start_sweep_job(
     deduplicate: bool,
     include_seen: bool,
     debug_log: Optional[str],
+    timestamp: Optional[str] = None,
 ) -> "_SweepJob":
     for job in _SWEEP_JOBS.values():
         if (
@@ -610,10 +734,11 @@ def _start_sweep_job(
             and job.profile_path == profile_path
             and job.deduplicate == deduplicate
             and job.include_seen == include_seen
+            and job.timestamp == timestamp
         ):
             log.info("Reusing running sweep job %s", job.id)
             return job
-    job = _SweepJob(profile_path, deduplicate, include_seen, debug_log)
+    job = _SweepJob(profile_path, deduplicate, include_seen, debug_log, timestamp)
     _SWEEP_JOBS[job.id] = job
     _prune_sweep_jobs()
     log.info("MCP run_sweep started (job=%s, profile=%s, debug_log=%s)",
@@ -716,6 +841,9 @@ def _sweep_payload(job: "_SweepJob") -> str:
         job_ids=[c["id"] for c in cards],
         card_count=len(results.get("cards", []) or []),
         assessed_count=len(cards) - len(_unassessed(cards)),
+        # Boards that return no body leave these cards unreadable until the caller
+        # fetches them; report the count so the assessment step can plan for it.
+        needs_description_count=sum(1 for c in cards if _needs_description(c)),
         assessment_mode=mode,
         assessment_required=mode == "agent" or _judgments_required(),
         skipped_sources=results.get("skipped_sources", []),
@@ -816,8 +944,9 @@ def create_profile(
         output_filename: Optional custom YAML path (defaults to profiles/{name}_{title}.yaml).
 
     Returns:
-        JSON string with the saved profile path, the portfolio state, and, when the
-        candidate gave no portfolio, a prompt asking how to collect one.
+        JSON string with the saved profile path, the resume documents the profile points
+        at, the portfolio state, and, when the candidate gave no portfolio, a prompt
+        asking how to collect one.
     """
     try:
         if not name or not name.strip():
@@ -913,6 +1042,7 @@ def create_profile(
             enabled_engines=runtime["enabled"],
             engines_not_enabled=engine_notes,
             resume_tracks=[track["name"] for track in tracks],
+            **_resume_payload(profile_data, include_text=False),
             **_portfolio_payload(profile_data),
         )
     except _EXPECTED as exc:
@@ -1027,6 +1157,7 @@ async def run_sweep(
     deduplicate: bool = True,
     include_seen: bool = False,
     wait_seconds: int = 45,
+    timestamp: Optional[str] = None,
 ) -> str:
     """
     Executes a 5-stage job sweep pipeline using a specified profile or the default profile.
@@ -1061,6 +1192,10 @@ async def run_sweep(
         include_seen: Report previously seen postings too, refreshing their history. Defaults to False.
         wait_seconds: Longest time to block before returning progress (default 45, clamped to 0..600).
             Hosts with tighter limits can set `SWEEPY_MCP_WAIT_SECONDS` to lower the cap.
+        timestamp: The user's local time for the report filenames, as `YYYY-MM-DD-HHMMSS`
+            or ISO 8601 (`2026-10-27T23:55:10`). Pass the clock you already know from the
+            conversation so artifacts carry the user's date and time instead of the
+            server's. Leave it empty to use the profile's `export.timezone`.
 
     Returns:
         JSON string reporting `sweep_status`, plus the active role count, the number of
@@ -1069,8 +1204,11 @@ async def run_sweep(
     """
     try:
         resolved = _resolve_read_path(profile_path, must_exist=True) if profile_path else None
+        stamp = normalize_stamp(timestamp)
         debug_log = enable_debug_logging()
-        job = _start_sweep_job(resolved, bool(deduplicate), bool(include_seen), debug_log)
+        job = _start_sweep_job(
+            resolved, bool(deduplicate), bool(include_seen), debug_log, stamp
+        )
         await _await_sweep_job(job, _clamp_wait(wait_seconds), ctx)
         return _sweep_payload(job)
     except _EXPECTED as exc:
@@ -1491,6 +1629,7 @@ def get_jobs(
     profile_stem: Optional[str] = None,
     results_dir: str = "results",
     limit: Optional[int] = None,
+    needs_description: Optional[bool] = None,
 ) -> str:
     """
     Returns the card records held in the current sweep session, ranked by deterministic
@@ -1500,43 +1639,70 @@ def get_jobs(
     both the highlight that favors the candidate and the obstacle that works against
     them, so no card reads as a one-sided pitch.
 
+    Some boards (Built In, Google Jobs, Apple) return a title and URL with no posting
+    body. Those cards carry ``needs_description: true``, score low on overlap because a
+    title cannot state requirements, and sort last. Fetch such a posting yourself, then
+    pass its text as ``description`` to ``submit_judgments`` along with your match. Call
+    ``get_jobs`` with ``needs_description=True`` to list them on their own. That is the
+    supported way to judge a role the sweep could not read.
+
     Each card also carries ``portfolio_url``, ``portfolio_path``, ``portfolio_pieces``,
     and ``portfolio_highlight``. ``portfolio_pieces`` comes from the portfolio for the
     card's resume track. Choose the pieces that fit the posting and pass them to
     ``submit_judgments`` as ``portfolio_highlight``.
 
+    The payload also carries ``resume_documents``: the parsed text of each resume file,
+    with the tracks that use it. Judge from that text, never from the profile's
+    ``must_have_skills`` or ``synonyms``, which only feed the deterministic keyword pass.
+    Read the document the way a recruiter does, including transferable skills, scope,
+    seniority, domain, and the outcome behind each bullet. Then score it the way the
+    posting's applicant tracking system parses it: evidence in a standard Experience or
+    Skills section counts, while the same term inside a table, header, footer, image, or
+    two-column sidebar may never reach a person and weighs less. ``resume_guidance``
+    restates these rules.
+
     Args:
         profile_stem: Optional profile identifier to load a persisted session from disk.
         results_dir: Results directory holding report_session.json (default 'results').
         limit: Optional number of cards to return (None returns all).
+        needs_description: Optional filter. ``True`` returns only cards whose posting body
+            is missing, ``False`` only cards that carry one, and ``None`` returns both.
 
     Returns:
-        JSON string with the list of card records, the portfolio setup, and guidance for
-        the portfolio step. When a sweep is still running, the payload also reports
-        `sweep_status`, `running_job_id`, and its progress, because the cards predate
-        that sweep.
+        JSON string with the list of card records, the resume documents for the profile,
+        the portfolio setup, and guidance for the portfolio step. When a sweep is still
+        running, the payload also reports `sweep_status`, `running_job_id`, and its
+        progress, because the cards predate that sweep.
     """
     try:
         _resolve_session(results_dir, profile_stem)
         cards = _sorted_cards()
+        total = len(cards)
+        missing = sum(1 for card in cards if _needs_description(card))
+        if needs_description is not None:
+            wanted = bool(needs_description)
+            cards = [card for card in cards if _needs_description(card) is wanted]
         if limit is not None:
             cards = cards[: max(1, int(limit))]
         portfolio = _portfolio_payload()
+        resume = _resume_payload()
+        counts = {"count": len(cards), "session_count": total, "needs_description_count": missing}
         running = [job for job in _SWEEP_JOBS.values() if job.status == "running"]
         if running:
             # These cards predate the sweep in flight; say so rather than letting
             # the caller present stale matches.
             newest = max(running, key=lambda job: job.started_at)
             return _ok(
-                count=len(cards),
+                **counts,
                 jobs=cards,
+                **resume,
                 sweep_status="running",
                 running_job_id=newest.id,
                 progress=newest.progress,
                 message="A sweep is still running. Call get_sweep_status before using these cards.",
                 **portfolio,
             )
-        return _ok(count=len(cards), jobs=cards, **portfolio)
+        return _ok(**counts, jobs=cards, **resume, **portfolio)
     except _EXPECTED as exc:
         log.warning("%s: %s", type(exc).__name__, exc)
         return _err(str(exc))
@@ -1568,6 +1734,7 @@ def submit_judgments(
     benefits: Optional[str] = None,
     page_theme: Optional[str] = None,
     portfolio_highlight: Optional[str] = None,
+    description: Optional[str] = None,
     judgments: Optional[List[dict]] = None,
 ) -> str:
     """
@@ -1578,6 +1745,18 @@ def submit_judgments(
     Assess the candidate-to-role fit from the resume and available job evidence. Do not
     copy the deterministic overlap score into match_pct or invent unsupported details.
     In the standard job-search workflow, submit judgments for all roles you assessed.
+
+    Judge the resume file, not the profile. ``get_jobs`` returns ``resume_documents``
+    with the parsed text of every track; read that text before scoring, because the
+    profile's ``must_have_skills`` and ``synonyms`` only feed the deterministic keyword
+    pass. Weigh the evidence a recruiter weighs, including transferable skills that do
+    not repeat the posting's wording, scope, seniority, domain, and outcomes. Then score
+    the document the way the posting's applicant tracking system parses it: a term a
+    parser reads inside a standard Experience or Skills section counts, while the same
+    term inside a table, header, footer, image, or two-column sidebar may never reach a
+    person and weighs less. Match the tracker to the apply URL when it is visible
+    (Workday, Greenhouse, Lever, Ashby, iCIMS, Taleo, Workable, SmartRecruiters) and name
+    in ``concerns`` what that parser would lose, such as text set inside a graphic.
 
     Every assessed card carries both sides of the case. ``alignment`` holds the
     highlight: the strongest evidence that the candidate fits, plus the move that uses
@@ -1591,7 +1770,9 @@ def submit_judgments(
 
     Args:
         job_id: Stable job id (from run_sweep or get_jobs).
-        match_pct: Optional LLM match percentage (0-100).
+        match_pct: Optional LLM match percentage (0-100), scored against the parsed
+            resume text and the ATS read described above. Leave unset when the evidence
+            supports only keyword overlap.
         resume_track, resume_color, domain, summary, requirements, alignment,
         concerns, has_extended_response, app_format, comp, benefits, page_theme:
             Optional overrides.
@@ -1603,6 +1784,10 @@ def submit_judgments(
             plain text. Read ``portfolio_pieces`` from the card and name the one to three
             pieces that match the posting. Leave unset when the card has no portfolio or
             the posting asks for none.
+        description: The posting body you read from the card's URL, for a card the sweep
+            could not read (``needs_description: true``). Supplying it clears the flag and
+            gives the report real requirement text to print. Pass ``summary`` and
+            ``requirements`` too when you want those rows to match what you read.
         judgments: Optional list of judgment objects, each with a ``job_id`` key. Do not
             combine with the single-card fields.
 
@@ -1637,9 +1822,13 @@ def submit_judgments(
             "benefits": benefits,
             "page_theme": page_theme,
             "portfolio_highlight": portfolio_highlight,
+            "description": description,
         }.items():
             if value is not None:
                 fields[key] = value
+
+        if "description" in fields and str(fields["description"]).strip():
+            fields["needs_description"] = False
 
         if not fields:
             return _err("No judgment fields supplied.")
@@ -1675,6 +1864,8 @@ def _submit_judgment_batch(judgments: List[dict]) -> str:
         if "match_pct" in fields:
             fields["match_value"] = int(fields.pop("match_pct"))
             fields["match_kind"] = "match"
+        if "description" in fields and str(fields["description"]).strip():
+            fields["needs_description"] = False
         try:
             applied.append(_session.apply_judgments(target, **fields))
         except KeyError:
@@ -1758,6 +1949,7 @@ def render_report(
     results_dir: str = "results",
     output_filename: Optional[str] = None,
     playbook: str = "",
+    timestamp: Optional[str] = None,
 ) -> str:
     """
     Renders the cards PDF from the current session and writes it through the sandbox.
@@ -1771,10 +1963,16 @@ def render_report(
         profile_stem: Optional profile identifier to load a persisted session from disk.
         results_dir: Results directory (default 'results').
         output_filename: Optional explicit output PDF path (must stay inside the workspace).
+            When omitted, Sweepy writes ``{profile_stem}_mcp_{YYYY-MM-DD-HHMMSS}.pdf``
+            into the results directory, mirroring the CLI's dated report names with an
+            ``mcp`` marker.
         playbook: Optional plain-text strategy note. Ampersands, angle brackets, and
             newlines are handled as text, and ``**bold**`` adds emphasis. The text is
             saved with the session, so a later render keeps it. When empty, Sweepy
             reuses the saved playbook, then falls back to a generated one.
+        timestamp: The user's local time for the default filename, as
+            ``YYYY-MM-DD-HHMMSS`` or ISO 8601. Pass the clock you know from the
+            conversation so the report carries the user's date and time.
 
     Returns:
         JSON string with the output path, page count, and the playbook it used.
@@ -1787,7 +1985,7 @@ def render_report(
             return _err("No jobs in the session to render.")
 
         if _assessment_mode(_session_profile) == "agent" or _judgments_required():
-            blocked = _assessment_error(cards, "render_report")
+            blocked = _assessment_error(_report_cards(cards, _session_profile), "render_report")
             if blocked:
                 return blocked
 
@@ -1800,11 +1998,12 @@ def render_report(
         if output_filename:
             pdf_path = _safe_output_path(output_filename)
         else:
-            base = os.path.join(
-                _session_dir or _resolve_read_path(results_dir, must_exist=True),
-                "report",
+            base_dir = _session_dir or _resolve_read_path(results_dir, must_exist=True)
+            stem = profile_stem or _session_stem or "report"
+            stamp = normalize_stamp(timestamp)
+            pdf_path = _safe_output_path(
+                os.path.join(base_dir, f"{result_stem(stem, 'mcp', timestamp=stamp)}.pdf")
             )
-            pdf_path = _safe_output_path(base + ".pdf")
 
         os.makedirs(os.path.dirname(pdf_path) or ".", exist_ok=True)
         with _quiet_stdout():

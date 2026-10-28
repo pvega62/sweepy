@@ -124,7 +124,7 @@ A sweep takes 30 to 90 seconds. Sweepy prints its progress as it works:
 
 ## What you get
 
-Every run writes date-stamped files to the `results/` folder. Earlier reports stay in place.
+Every run writes date-stamped files to the `results/` folder. Earlier reports stay in place. A sweep that runs through MCP adds `mcp` to the filename, as in `paralegal_nyc_mcp_2026-10-27-223115.pdf`. The stamp follows your machine's clock; set `export.timezone` to name files in another zone.
 
 - **A PDF report.** One card per role, sorted by match score, with pay, benefits, and a link to apply.
 - **A CSV file.** Every card field, a 1,000-character posting excerpt, and eight job-tracking columns that Sweepy copies into later sweeps. Open it in Excel, Google Sheets, or Notion. Sweepy reads each posting in full when it builds the card; the excerpt only shortens what the files show.
@@ -288,6 +288,8 @@ The orchestrator handles the rest. It dispatches by name and enforces the timeou
 Sweepy scores postings by shared vocabulary, and that scoring doesn't call a model or use the network. The same inputs produce the same score, which measures wording, not fit. The MCP server treats an agent assessment as the expected path.
 
 `run_sweep` doesn't call a model. It returns `assessment_mode: "agent"`, `assessment_required: true`, and `assessed_count: 0`. The workflow continues with `get_jobs`, an independent assessment of each role against the resume, `submit_judgments`, and `render_report`. Pass every judgment in one `judgments` list to keep a 24-role assessment to one call. Assessed cards show `NN% MATCH`. Unassessed cards keep `NN% KEYWORD OVERLAP`.
+
+`get_jobs` returns `resume_documents` with the parsed text of every resume track. Judge that text, not the profile's `must_have_skills` and `synonyms`, which only feed the deterministic keyword pass. Read the document the way a recruiter reads it: transferable skills, the scope and seniority behind each bullet, domain, tools, and the outcomes it proves. Then score it the way the posting's applicant tracking system parses it. A term the parser finds in a standard Experience or Skills section counts as evidence. The same term inside a table, header, footer, image, or two-column sidebar may never reach a person, so it weighs less. Sweepy names the ATS family when the apply URL reveals it, and the judgement records what a parser would lose.
 
 Assess both sides of the case. `alignment` states the highlight, the strongest evidence that the candidate fits. `concerns` states what works against the candidate, such as a missing qualification, a tenure gap, or pay below the floor. The report prints the pair on one line under the requirements row, and the CSV gains a `concerns` column. A keyword-only run fills `concerns` from the posting keywords the resume misses.
 

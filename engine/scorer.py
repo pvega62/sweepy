@@ -721,8 +721,11 @@ def _score_job_against_keywords(
         synonyms=synonyms,
     )
     # Requirement overlap needs both an extractable posting and a readable résumé.
-    # Without one of them, the blend degrades to keyword overlap.
-    job_side = bool(job_keywords) and bool(resume_text)
+    # A posting that carries no body leaves only its title, and a title-only
+    # "requirement" set would score every board that omits descriptions at 100%.
+    # Without a body the blend degrades to keyword overlap.
+    has_body = bool(_strip_html(_strip_md(str(job.get("description") or ""))).strip())
+    job_side = bool(job_keywords) and bool(resume_text) and has_body
 
     if resume_cover is None and not job_side:
         score = 75

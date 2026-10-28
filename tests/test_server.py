@@ -62,6 +62,7 @@ def reset_session(monkeypatch):
     monkeypatch.setattr(server, "_session", server.SweepSession())
     monkeypatch.setattr(server, "_session_profile", {})
     monkeypatch.setattr(server, "_session_dir", None)
+    monkeypatch.setattr(server, "_session_stem", None)
     monkeypatch.setattr(server, "_session_playbook", "")
     monkeypatch.setattr(server, "_SWEEP_JOBS", {})
     monkeypatch.setattr(server, "_last_history", {"scope": None, "config": {}})
@@ -179,6 +180,9 @@ def test_create_profile_success(tmp_path, monkeypatch):
     assert "openroles" in data["engines_not_enabled"]
     assert "apify" in data["engines_not_enabled"]
     assert os.path.exists(data["profile_path"])
+    assert data["resume_configured"] is True
+    assert data["resume_documents"][0]["path"] == os.path.realpath(str(pdf))
+    assert "text" not in data["resume_documents"][0]
     with open(data["profile_path"], encoding="utf-8") as handle:
         saved = yaml.safe_load(handle)
     assert saved["sources"]["enabled"] == data["enabled_engines"]
@@ -891,6 +895,122 @@ def test_get_jobs_omits_sweep_fields_when_idle(tmp_path, monkeypatch, reset_sess
     assert "running_job_id" not in data
 
 
+def test_get_jobs_lists_cards_that_need_a_description(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    described = {**_card(), "id": "has-body", "rank": 1, "description": "Real requirements."}
+    unreadable = {**_card(), "id": "no-body", "rank": 2, "description": "", "needs_description": True}
+    server._session.upsert(described)
+    server._session.upsert(unreadable)
+
+    missing = json.loads(server.get_jobs(results_dir=str(tmp_path), needs_description=True))
+    present = json.loads(server.get_jobs(results_dir=str(tmp_path), needs_description=False))
+    everything = json.loads(server.get_jobs(results_dir=str(tmp_path)))
+
+    assert [job["id"] for job in missing["jobs"]] == ["no-body"]
+    assert [job["id"] for job in present["jobs"]] == ["has-body"]
+    assert everything["count"] == 2
+    assert missing["needs_description_count"] == 1
+    assert missing["session_count"] == 2
+
+
+def test_submit_judgments_accepts_a_fetched_description(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    server._session.upsert({**_card(), "description": "", "needs_description": True})
+
+    data = json.loads(
+        server.submit_judgments(
+            "abc123",
+            match_pct=61,
+            description="Requirements: author API reference docs and SDK quickstarts.",
+            requirements="Author API reference docs and SDK quickstarts.",
+        )
+    )
+
+    assert data["status"] == "ok"
+    assert data["job"]["needs_description"] is False
+    assert "SDK quickstarts" in data["job"]["description"]
+    assert json.loads(server.get_jobs(results_dir=str(tmp_path), needs_description=True))["count"] == 0
+
+
+def _make_resume_pdf(path, text):
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    for index, line in enumerate(text.splitlines()):
+        page.insert_text((72, 72 + index * 14), line)
+    doc.save(str(path))
+    doc.close()
+
+
+def test_get_jobs_returns_parsed_resume_text(tmp_path, monkeypatch, reset_session):
+    """Judgment reads the resume document, not the profile's keyword list."""
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    resume = tmp_path / "resume.pdf"
+    _make_resume_pdf(resume, "Experience\nAuthored API reference docs for a payments SDK.")
+    monkeypatch.setattr(
+        server,
+        "_session_profile",
+        {"resume": {"path": str(resume), "must_have_skills": ["Markdown"]}},
+    )
+    server._session.upsert(_card())
+
+    data = json.loads(server.get_jobs())
+
+    assert data["status"] == "ok"
+    assert data["resume_configured"] is True
+    assert data["resume_documents"][0]["path"] == str(resume)
+    assert data["resume_documents"][0]["tracks"] == []
+    assert "payments SDK" in data["resume_documents"][0]["text"]
+    assert "tracking system" in data["resume_guidance"]
+
+
+def test_get_jobs_groups_resume_tracks_that_share_a_file(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    resume = tmp_path / "resume.pdf"
+    ux = tmp_path / "ux.pdf"
+    _make_resume_pdf(resume, "Technical Writer")
+    _make_resume_pdf(ux, "UX Writer")
+    monkeypatch.setattr(
+        server,
+        "_session_profile",
+        {
+            "resume": {
+                "path": str(resume),
+                "tracks": [
+                    {"name": "Software TW Resume", "path": str(resume)},
+                    {"name": "Hardware TW Resume", "path": str(resume)},
+                    {"name": "UX Writing Resume", "path": str(ux)},
+                ],
+            }
+        },
+    )
+    server._session.upsert(_card())
+
+    documents = json.loads(server.get_jobs())["resume_documents"]
+
+    assert [doc["path"] for doc in documents] == [str(resume), str(ux)]
+    assert documents[0]["tracks"] == ["Software TW Resume", "Hardware TW Resume"]
+    assert documents[1]["tracks"] == ["UX Writing Resume"]
+    assert "UX Writer" in documents[1]["text"]
+
+
+def test_get_jobs_survives_a_missing_resume_file(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(
+        server, "_session_profile", {"resume": {"path": str(tmp_path / "gone.pdf")}}
+    )
+    server._session.upsert(_card())
+
+    data = json.loads(server.get_jobs())
+
+    assert data["status"] == "ok"
+    assert data["resume_configured"] is True
+    assert data["resume_documents"][0]["text"] == ""
+
+
 def test_submit_judgments_and_get_jobs_roundtrip(tmp_path, monkeypatch, reset_session):
     monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
     server._session.upsert(_card())
@@ -1142,6 +1262,100 @@ def test_submit_judgments_rejects_mixed_calls(reset_session):
     assert data["status"] == "error"
 
 
+def test_render_report_defaults_to_the_dated_mcp_filename(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    monkeypatch.setattr(server, "_session_stem", "tech_writer")
+    monkeypatch.setattr(server, "_session_profile", {"name": "Test", "report": {"assessment": "keyword"}})
+    server._session.upsert(_card())
+
+    data = json.loads(server.render_report())
+
+    name = os.path.basename(data["pdf_report"])
+    assert name.startswith("tech_writer_mcp_")
+    assert name.endswith(".pdf")
+    assert name.count("-") == 3
+    assert os.path.exists(data["pdf_report"])
+
+
+def test_run_sweep_forwards_the_supplied_timestamp(monkeypatch, tmp_path, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    captured = {}
+    monkeypatch.setattr(
+        server,
+        "run_sweep_pipeline",
+        lambda **kwargs: captured.update(kwargs) or {"status": "completed", "cards": []},
+    )
+
+    asyncio.run(server.run_sweep(timestamp="2026-10-27T23:55:10", ctx=None))
+
+    assert captured["timestamp"] == "2026-10-27-235510"
+
+
+def test_run_sweep_rejects_an_unreadable_timestamp(monkeypatch, tmp_path, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    started = []
+    monkeypatch.setattr(
+        server, "run_sweep_pipeline", lambda **kwargs: started.append(kwargs) or {}
+    )
+
+    data = json.loads(asyncio.run(server.run_sweep(timestamp="next week", ctx=None)))
+
+    assert data["status"] == "error"
+    assert "timestamp" in data["message"].lower()
+    assert started == []
+
+
+def test_render_report_uses_the_supplied_timestamp(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    monkeypatch.setattr(server, "_session_stem", "tech_writer")
+    monkeypatch.setattr(server, "_session_profile", {"name": "Test", "report": {"assessment": "keyword"}})
+    server._session.upsert(_card())
+
+    data = json.loads(server.render_report(timestamp="2026-10-27T23:55:10"))
+
+    assert os.path.basename(data["pdf_report"]) == "tech_writer_mcp_2026-10-27-235510.pdf"
+
+
+def test_render_report_rejects_an_unreadable_timestamp(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    monkeypatch.setattr(server, "_session_profile", {"name": "Test", "report": {"assessment": "keyword"}})
+    server._session.upsert(_card())
+
+    data = json.loads(server.render_report(timestamp="tomorrow"))
+
+    assert data["status"] == "error"
+    assert "timestamp" in data["message"].lower()
+
+
+def test_profile_stem_from_result_drops_the_mcp_marker():
+    assert server._profile_stem_from_result("tech_writer_mcp_2026-10-27-223115") == "tech_writer"
+    assert server._profile_stem_from_result("tech_writer_2026-10-27-223115") == "tech_writer"
+
+
+def test_run_sweep_persists_the_profile_stem_for_later_renders(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(
+        server,
+        "run_sweep_pipeline",
+        lambda **kwargs: {
+            "status": "completed",
+            "cards": [],
+            "reports": {},
+            "output_dir": str(tmp_path),
+            "profile": {"name": "Test"},
+            "profile_stem": "tech_writer",
+        },
+    )
+
+    asyncio.run(server.run_sweep(ctx=None))
+
+    saved = json.loads((tmp_path / server._SESSION_FILENAME).read_text(encoding="utf-8"))
+    assert saved["profile_stem"] == "tech_writer"
+
+
 def test_render_report_blocks_unassessed_cards_in_agent_mode(tmp_path, monkeypatch, reset_session):
     monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
     monkeypatch.setattr(server, "_session_dir", str(tmp_path))
@@ -1154,6 +1368,25 @@ def test_render_report_blocks_unassessed_cards_in_agent_mode(tmp_path, monkeypat
     assert data["unassessed_job_ids"] == ["abc123"]
     assert "submit_judgments" in data["message"]
     assert not (tmp_path / "report.pdf").exists()
+
+
+def test_render_report_gates_only_the_cards_it_prints(tmp_path, monkeypatch, reset_session):
+    monkeypatch.setattr(server, "_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(server, "_session_dir", str(tmp_path))
+    monkeypatch.setattr(
+        server,
+        "_session_profile",
+        {"name": "Test", "report": {"assessment": "agent", "max_cards": 1}},
+    )
+    runner_up = {**_card(), "id": "def456", "rank": 2, "url": "https://jobs.ashbyhq.com/modal/2"}
+    server._session.upsert(_card())
+    server._session.upsert(runner_up)
+    server.submit_judgments("abc123", match_pct=95)
+
+    data = json.loads(server.render_report(output_filename=str(tmp_path / "report.pdf")))
+
+    assert data["status"] == "ok"
+    assert data["pages"] == 1
 
 
 def test_render_report_allows_unassessed_cards_in_keyword_mode(tmp_path, monkeypatch, reset_session):

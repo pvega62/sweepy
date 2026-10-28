@@ -598,3 +598,16 @@ def test_frame_to_jobs_filters_hourly_pay_by_annual_floor():
     assert [job["title"] for job in kept] == ["Technical Writer"]
     assert dropped == []
 
+
+def test_frame_to_jobs_can_require_a_title_match():
+    titles = ["Technical Writer", "Content Designer"]
+    writer = _pay_frame("", title="Senior Technical Writer")
+    engineer = _pay_frame("", title="Senior Software Engineer", url="https://example.com/eng")
+    frame = pd.concat([writer, engineer], ignore_index=True)
+
+    kept = discovery._frame_to_jobs(frame, location="Remote", titles=titles, filter_titles=True)
+    unfiltered = discovery._frame_to_jobs(frame, location="Remote", titles=titles)
+
+    assert [job["title"] for job in kept] == ["Senior Technical Writer"]
+    assert len(unfiltered) == 2
+
