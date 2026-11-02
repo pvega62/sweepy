@@ -42,6 +42,12 @@ jobs:
           path: test-results.xml
           if-no-files-found: ignore
 
+      - name: Report pytest failures
+        if: always()
+        shell: bash
+        run: |
+          python -c 'from xml.etree import ElementTree as ET; import os; p="test-results.xml"; print("### Pytest failures"); failures=[]; root=ET.parse(p).getroot() if os.path.exists(p) else None; failures=[case for case in root.iter("testcase") if case.find("failure") is not None or case.find("error") is not None] if root is not None else []; [print(f"- {case.get(\"classname\", \"\")}::{case.get(\"name\", \"\")}\n  {next(iter([node.text for node in [case.find(\"failure\"), case.find(\"error\")] if node is not None]), \"\")[:2000]}") for case in failures[:20]]; print("No test result file found." if root is None else "No failures found." if not failures else "")' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage report
         uses: actions/upload-artifact@v6
         with:
