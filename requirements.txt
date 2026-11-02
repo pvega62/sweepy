@@ -4,6 +4,10 @@ python-docx==1.2.0
 requests==2.32.5
 beautifulsoup4==4.15.0
 pyyaml==6.0.3
+# IANA timezones for export.timezone. Windows ships no zone database, so
+# ZoneInfo("America/New_York") needs this package there. Fixed ±HH:MM offsets
+# and "local" work without it.
+tzdata==2026.5; sys_platform == "win32"
 questionary==2.1.1
 prompt-toolkit==3.0.53
 python-jobspy==1.2.0

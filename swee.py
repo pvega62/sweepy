@@ -12,6 +12,11 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 from typing import Callable, Optional
 
+# OpenBLAS reads this once at load time, so it must be set before the engine
+# imports below pull in numpy through pandas.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
+from engine import timefmt
 from engine.config import (
     DOCS_URL,
     last_profile_path,
@@ -36,6 +41,7 @@ from engine.exporter import export_to_csv, export_to_json, export_to_png
 from engine.history import SweepHistory, build_history, history_scope
 from engine.logging import enable_debug_logging, recent_log_lines
 from engine.pdf_builder import build_pdf
+from engine.portfolio import PORTFOLIO_SUFFIXES, looks_like_url, normalize_portfolio
 from engine.report import build_report
 from engine.scorer import normalize_synonyms, score_jobs, score_jobs_by_track
 from engine.sweep_config import normalize_sources, validate_sources
@@ -64,6 +70,27 @@ _DEFAULT_PROFILE_CANDIDATES = (
 )
 
 
+def result_stamp(timezone_name: Optional[str] = None) -> str:
+    """The ``YYYY-MM-DD-HHMMSS`` stamp Sweepy writes into report filenames."""
+    return timefmt.stamp(timezone_name)
+
+
+def result_stem(
+    profile_stem: str,
+    execution_method: str = "direct",
+    timezone_name: Optional[str] = None,
+    timestamp: Optional[str] = None,
+) -> str:
+    """Build a report stem, marking an MCP-driven run with ``mcp``.
+
+    ``timestamp`` wins when a caller supplies one, which lets an assistant stamp a
+    report with the user's own clock instead of the server's.
+    """
+    marker = "mcp_" if execution_method == "mcp" else ""
+    stamp = timefmt.normalize_stamp(timestamp) or timefmt.stamp(timezone_name)
+    return f"{profile_stem}_{marker}{stamp}"
+
+
 def get_dependency_versions() -> str:
     parts = [f"Python {sys.version.split()[0]}"]
     for pkg in ("pymupdf", "reportlab"):
@@ -87,6 +114,64 @@ def _configure_logging() -> None:
 
 def _split_list(value: Optional[str]) -> list:
     return [part.strip() for part in str(value or "").split(",") if part.strip()]
+
+
+def _portfolio_sources(
+    values, track_names, default_track: str = ""
+) -> list:
+    """Turn ``--portfolio`` values into portfolio entries.
+
+    A value may carry a ``TRACK=`` prefix that names the resume track it serves.
+    Values without a prefix use ``--portfolio-track``, then fall back to every track.
+    """
+    entries = []
+    track_lookup = {name.lower(): name for name in track_names if name}
+    if default_track and default_track.lower() not in track_lookup:
+        raise ValueError(
+            f"--portfolio-track {default_track!r} matches no resume track "
+            + (
+                f"({', '.join(track_names)})"
+                if track_names
+                else "(this profile defines none)"
+            )
+        )
+    for raw in values:
+        text = str(raw or "").strip().strip('"')
+        if not text:
+            continue
+        track = ""
+        for name in track_lookup.values():
+            prefix = f"{name}="
+            if text.lower().startswith(prefix.lower()):
+                track, text = name, text[len(prefix):].strip().strip('"')
+                break
+        if not text:
+            raise ValueError(f"--portfolio {raw!r} names no URL or file")
+        if "=" in text and not looks_like_url(text) and not os.path.exists(text):
+            prefix = text.partition("=")[0]
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9 _-]*", prefix or ""):
+                valid = ", ".join(track_lookup.values()) or "(none)"
+                raise ValueError(
+                    f"--portfolio {raw!r} names track {prefix!r}, which this profile does "
+                    f"not define. Valid tracks: {valid}"
+                )
+
+        if looks_like_url(text):
+            entry = {"url": text}
+        else:
+            resolved = os.path.abspath(os.path.expanduser(text))
+            if not os.path.exists(resolved):
+                raise ValueError(f"--portfolio file not found: {text!r}")
+            if os.path.splitext(resolved)[1].lower() not in PORTFOLIO_SUFFIXES:
+                raise ValueError(
+                    f"--portfolio must be a URL or one of: {', '.join(PORTFOLIO_SUFFIXES)}"
+                )
+            entry = {"path": resolved}
+
+        if track or default_track:
+            entry["track"] = track or default_track
+        entries.append(entry)
+    return entries
 
 
 def _setup_headless(args) -> None:
@@ -176,6 +261,22 @@ def _setup_headless(args) -> None:
         export.setdefault("output_dir", "results")
         export["tracking"] = job_tracking
         profile["export"] = export
+
+    portfolio_values = getattr(args, "portfolio", None) or []
+    if portfolio_values:
+        track_names = [
+            str(track.get("name") or "")
+            for track in (profile.get("resume") or {}).get("tracks") or []
+            if str(track.get("name") or "").strip()
+        ]
+        sources = _portfolio_sources(
+            portfolio_values,
+            track_names,
+            str(getattr(args, "portfolio_track", "") or "").strip(),
+        )
+        block = normalize_portfolio({"sources": sources}, track_names)
+        profile["portfolio"] = block
+        print(f"Portfolio: {len(block['sources'])} source(s)")
 
     runtime = normalize_sources(profile)
     errors = validate_sources(
@@ -283,6 +384,21 @@ def main() -> None:
     parser.add_argument("--titles", metavar="TITLES", help="Target titles, comma-separated")
     parser.add_argument("--location", help="Target location for a headless setup")
     parser.add_argument("--resume", metavar="PATH", help="Resume path for a headless setup")
+    parser.add_argument(
+        "--portfolio",
+        action="append",
+        metavar="VALUE",
+        help=(
+            "Portfolio URL or local PDF, DOCX, Markdown, text, or HTML file for a headless "
+            "setup. Repeat for more sources, and prefix a value with TRACK= to attach it to "
+            "one resume track"
+        ),
+    )
+    parser.add_argument(
+        "--portfolio-track",
+        metavar="TRACK",
+        help="Resume track for --portfolio values that carry no TRACK= prefix",
+    )
 
     args = parser.parse_args()
 
@@ -559,11 +675,13 @@ def run_sweep_pipeline(
     deduplicate: bool = True,
     include_seen: bool = False,
     execution_method: str = "direct",
+    timestamp: Optional[str] = None,
 ) -> dict:
     """
     Executes the Sweepy 5-stage pipeline.
     Accepts either a path to a profile YAML or a pre-loaded/in-memory configuration dictionary.
-    Returns a dictionary summarizing the sweep results, output paths, and top roles.
+    ``timestamp`` overrides the filename stamp, and ``export.timezone`` sets the clock behind
+    it. Returns a dictionary summarizing the sweep results, output paths, and top roles.
     """
     log_fn = log.info if verbose else (lambda *_: None)
 
@@ -604,6 +722,7 @@ def run_sweep_pipeline(
     include_hybrid = search.get("include_hybrid", True)
     min_salary = search.get("min_salary", 0)
     salary_from_description = bool(search.get("salary_from_description", True))
+    filter_titles = bool(search.get("filter_titles", False))
 
     resume = config.get("resume", {})
     resume_path = resume.get("path", "")
@@ -635,6 +754,9 @@ def run_sweep_pipeline(
     export = config.get("export", {})
     formats = [f.strip().lower() for f in export.get("format", "pdf,csv").split(",") if f.strip()]
     output_dir = export.get("output_dir", "results")
+    filename_timezone = export.get("timezone") or timefmt.DEFAULT_TIMEZONE
+    # Resolve now: a typo should fail before a five-minute scrape, not after it.
+    timefmt.resolve_timezone(filename_timezone)
     job_tracking = tracking_enabled(export)
 
     titles_display = ", ".join(titles) if titles else "All Titles"
@@ -668,7 +790,7 @@ def run_sweep_pipeline(
         titles, location, remote_only, include_hybrid, min_salary, platforms,
         sources_config=sources, runtime=runtime, cache=cache, circuit=circuit,
         skipped=skipped_sources, progress=progress, deduplicate=deduplicate,
-        salary_from_description=salary_from_description,
+        salary_from_description=salary_from_description, filter_titles=filter_titles,
     )
     source_jobs, source_counts = discover_sources(
         sources, titles, location, remote_only, include_hybrid, min_salary,
@@ -820,10 +942,10 @@ def run_sweep_pipeline(
     # [5/5] Generating reports
     _progress(5, 5, "Generating reports")
     log_fn("\n[5/5] Generating reports...")
-    today_str = datetime.date.today().isoformat()
-    utc_now = datetime.datetime.now(datetime.timezone.utc)
-    time_str = utc_now.strftime("%H%M%S")
-    base_output_path = os.path.join(output_dir, f"{profile_stem}_{today_str}-{time_str}")
+    base_output_path = os.path.join(
+        output_dir,
+        result_stem(profile_stem, execution_method, filename_timezone, timestamp),
+    )
     os.makedirs(output_dir, exist_ok=True)
 
     pdf_file = f"{base_output_path}.pdf"
@@ -907,6 +1029,7 @@ def run_sweep_pipeline(
         "cards": cards,
         "output_dir": os.path.realpath(output_dir),
         "profile": config,
+        "profile_stem": profile_stem,
         "reports": generated_reports,
         "skipped_sources": skipped_sources,
     }

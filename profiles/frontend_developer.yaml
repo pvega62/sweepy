@@ -1,0 +1,61 @@
+name: "Jamie"
+
+search:
+  titles:
+    - "Front End Developer"
+    - "React Developer"
+    - "UI Engineer"
+  location: "San Francisco, CA"
+  remote_only: true
+  include_hybrid: false
+  min_salary: 120000
+
+resume:
+  path: "C:/path/to/jamie_frontend_resume.pdf"
+  must_have_skills:
+    - "React"
+    - "TypeScript"
+    - "JavaScript"
+    - "CSS"
+    - "Tailwind"
+    - "Next.js"
+  keywords_weight: 1.5
+
+platforms:
+  greenhouse: true
+  ashby: true
+  lever: true
+  workable: true
+  aggregators: false
+  custom: []
+
+sources:
+  jobspy:
+    linkedin: true
+    indeed: true
+    glassdoor: true
+    zip_recruiter: true
+  ashby:
+    orgs: []
+  workable:
+    slugs: []
+  builtinnyc:
+    enabled: false
+    categories: []
+
+# Optional 3.0 engines: run `sweepy --install-engines all`, then uncomment a block.
+#   openroles:
+#     companies: [figma, stripe, notion]
+#   jobdrop:
+#     sites: [linkedin, indeed, google, glassdoor]
+
+report:
+  style: "cards"
+  cards_per_page: 6
+  max_cards: 24
+  destinations: []
+
+export:
+  format: "pdf,json"
+  output_dir: "results"
+  tracking: true

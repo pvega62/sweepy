@@ -17,6 +17,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the current version and release history.
 - **Checks for duplicate postings across boards.** Matches normalized job title, company, and location, even when boards use different URLs. Pass `--no-dedupe` to keep every board's listing for one run.
 - **Skips postings you already saw.** A daily sweep reports new roles instead of yesterday's list. Sweepy suppresses reported postings for a four-day window. Pass `--include-seen` to bring them back for one run.
 - **Routes you to the right resume.** Sends each job to the resume track you wrote for that role, then labels the card with a color badge.
+- **Makes your portfolio part of every decision.** Point Sweepy at an online portfolio or a local PDF, Word, Markdown, text, or HTML file. Every card lists that portfolio's pieces. When you apply for more than one kind of role, keep one portfolio per resume track.
 - **Builds a report you can use.** Produces a card-per-page PDF with clickable links, plus CSV and JSON files for your own tracking.
 - **Turns the CSV into an application tracker.** The CSV ends with `date_applied`, `status`, `interview_stage`, `offer_amount`, `offer_date`, `follow_up_date`, `contact`, and `notes`. Fill them in through Excel, Google Sheets, or Notion. Sweepy copies your entries into later sweeps of the same profile. The PDF gives you one ranked reading list with apply links on each card. The spreadsheet keeps roles past the PDF card limit and records what you did about each one. Turn the columns off with `export.tracking: false`.
 
@@ -43,7 +44,7 @@ pip install -e ".[all-engines]"
 
 That adds HireHunt, openroles, and Apify in one resolution. `jobdrop` stays out because its metadata can't resolve next to JobSpy. Install it with `sweepy --install-engines jobdrop --allow-engine-conflicts` when you want its 33 boards. The [Job engines](#job-engines) section covers both paths.
 
-Running `sweepy` opens the wizard's tile-based launchpad. Use the arrow keys to move between **Launch Sweep**, **Build Profile**, **Load Profile**, **Sweep Settings**, **Sweepy's Toolbox**, and **Exit Sweepy**, then press Enter. Tile subtitles state the action in plain words, as in **Run your job search now** or **Open a search you saved**. **Load Profile** lets you choose a saved profile to use for the next sweep. The toolbox contains profile editing, engine management, debug logging, help, recent logs, document conversion, and updates. **Build Profile** collects your name, target job titles, location, and resume path. The wizard saves the profile when you finish. Run `sweepy --setup --profile profiles/your_profile.yaml` to edit a profile directly.
+Running `sweepy` opens the wizard's tile-based launchpad. Use the arrow keys to move between **Start Sweep**, **Build Profile**, **Load Profile**, **Sweep Settings**, **Sweepy's Toolbox**, and **Exit Sweepy**, then press Enter. Tile subtitles state the action in plain words, as in **Run your job search now** or **Open a search you saved**. **Load Profile** lets you choose a saved profile to use for the next sweep. The toolbox contains profile editing, engine management, debug logging, help, recent logs, document conversion, and updates. **Build Profile** collects your name, target job titles, location, and resume path. The wizard saves the profile when you finish. Run `sweepy --setup --profile profiles/your_profile.yaml` to edit a profile directly.
 
 Submenus open with **← Back**, which returns to the menu that opened them. Esc does the same. At a question, Esc reopens the previous answer. Inside a submenu, Esc steps up one level. At the launchpad, Esc exits. Ctrl+C quits from anywhere.
 
@@ -53,7 +54,7 @@ To pull new code when a version releases, run:
 sweepy --update
 ```
 
-Sweepy checks your Git remote, fast-forwards the checkout, and reinstalls `requirements.txt` along with any optional engines you already installed. It refuses to change a checkout with uncommitted changes. Prefer `sweepy --check-update` to check for a new version without changing anything.
+Sweepy checks your Git remote and fast-forwards the checkout. It reinstalls `requirements.txt` and any optional engines you already installed. It refuses to change a checkout with uncommitted changes. Prefer `sweepy --check-update` to check for a new version without changing anything.
 
 Then run your first sweep:
 
@@ -70,7 +71,7 @@ sweepy --run --no-dedupe
 sweepy --profile profiles/your_profile.yaml --no-dedupe
 ```
 
-By default, Sweepy keeps one posting when different boards list the same normalized title, company, and location. The MCP `run_sweep` tool accepts `deduplicate=false` for the same per-run override.
+By default, Sweepy keeps one posting when different boards list the same normalized title, company, and location. The Model Context Protocol (MCP) `run_sweep` tool accepts `deduplicate=false` for the same per-run override.
 
 Sweepy also hides postings from earlier sweeps. Review them again or start over:
 
@@ -123,10 +124,10 @@ A sweep takes 30 to 90 seconds. Sweepy prints its progress as it works:
 
 ## What you get
 
-Every run writes date-stamped files to the `results/` folder. Earlier reports stay in place.
+Every run writes date-stamped files to the `results/` folder. Earlier reports stay in place. A sweep that runs through MCP adds `mcp` to the filename, as in `paralegal_nyc_mcp_2026-10-27-223115.pdf`. The stamp follows your machine's clock. Set `export.timezone` to name files in another zone.
 
 - **A PDF report.** One card per role, sorted by match score, with pay, benefits, and a link to apply.
-- **A CSV file.** Every card field, a 1,000-character posting excerpt, and eight job-tracking columns that Sweepy copies into later sweeps. Open it in Excel, Google Sheets, or Notion.
+- **A CSV file.** Every card field, the whole posting body, and eight job-tracking columns that Sweepy copies into later sweeps. Open it in Excel, Google Sheets, or Notion. Set `export.description_chars` to a positive number when you want smaller files. A cut body ends with a note that counts the omitted characters.
 - **A JSON file.** The same data in a format other tools can read.
 
 Open the [sample PDF](docs/sample_report.pdf), or view [page 1 as an image](docs/sample_report.png).
@@ -170,7 +171,7 @@ Measured on Windows with Python 3.13:
 | `apify-client` | +14 MB | Adds impit and more-itertools |
 | `jobdrop` | +406 MB | Led by scipy (134 MB), playwright (113 MB), tls-client (93 MB), and selenium (34 MB) |
 
-A full install of the compatible engines takes about **310 MB**. Forcing `jobdrop` in as well brings the package total to about **715 MB**, before it downloads a browser.
+A full install of the compatible engines takes about **320 MB**. Adding `jobdrop` brings the total to about **725 MB** before it downloads a browser.
 
 Browser binaries live outside the Python environment and arrive on first use:
 
@@ -221,6 +222,9 @@ Each row shows its engine and install state, such as `Indeed  [jobspy · built i
 ```yaml
 sources:
   enabled: [jobspy, ats, openroles]
+  greenhouse:
+    discovery: broad
+    concurrency: 20
   openroles:
     ats: [greenhouse, lever, ashby, workday]
     companies: [figma, stripe, notion]
@@ -247,7 +251,8 @@ orchestrator:
 Older profiles keep working. The board booleans under `sources.jobspy` still turn individual JobSpy boards on and off. Any profile without a `sources.enabled` list defaults to JobSpy plus the built-in ATS readers.
 
 - **Descriptions stay on by default.** Scoring matches posting text against your resume. Turn `fetch_descriptions` off only if you accept weaker matches for a faster sweep.
-- **Proxies stay opt-in per engine.** The wizard reads them from a file or accepts one inline, hides the password while you type, and never prints the contents. `hirehunt` lacks a proxy hook, so Sweepy logs a warning when a profile configures one.
+- **Greenhouse reads a wider board list on request.** `sources.greenhouse.boards` names the boards you want. Set `sources.greenhouse.discovery: broad` to sweep the bundled 619-slug list in `data/sources/greenhouse_slugs_broad.txt` as well, and Sweepy appends any board your profile already names. `sources.greenhouse.concurrency` sets how many boards Sweepy reads at once: 20 in broad mode, 1 otherwise. A broad probe draws plenty of HTTP 404 responses by design. Sweepy reports the failure count and the first ten slugs in one warning instead of one line per board.
+- **Proxies stay opt-in per engine.** The wizard reads them from a file or accepts one inline, hides the password while you type, and never prints the contents. `hirehunt` doesn't offer a proxy option, so Sweepy logs a warning when a profile configures one.
 - **The cache starts on.** A repeated query with the same engines and settings returns the previous results for an hour. Clear it with `cache.enabled: false`, or shorten `ttl_seconds`.
 - **Timeouts stop at the boundary.** Python can't stop a thread that already blocks inside a library call. Sweepy stops waiting and moves on, and each library applies its own HTTP timeouts underneath.
 - **The circuit breaker skips a failing engine.** After five consecutive failures, Sweepy stops calling that engine for 30 seconds and reports it in `skipped_sources`.
@@ -288,6 +293,33 @@ Sweepy scores postings by shared vocabulary, and that scoring doesn't call a mod
 
 `run_sweep` doesn't call a model. It returns `assessment_mode: "agent"`, `assessment_required: true`, and `assessed_count: 0`. The workflow continues with `get_jobs`, an independent assessment of each role against the resume, `submit_judgments`, and `render_report`. Pass every judgment in one `judgments` list to keep a 24-role assessment to one call. Assessed cards show `NN% MATCH`. Unassessed cards keep `NN% KEYWORD OVERLAP`.
 
+`get_jobs` returns `resume_documents` with the parsed text of every resume track. Judge that text, not the profile's `must_have_skills` and `synonyms`, which only feed the deterministic keyword pass. Read the document the way a recruiter reads it: transferable skills, the scope and seniority behind each bullet, domain, tools, and the outcomes it proves. Then score it the way the posting's applicant tracking system parses it. A term the parser finds in a standard Experience or Skills section counts as evidence. The same term inside a table, header, footer, image, or two-column sidebar may never reach a person, so it weighs less. Sweepy names the ATS family when the apply URL reveals it, and the judgement records what a parser would lose.
+
+`match_pct` measures qualifications, so employment logistics stay out of it. Part-time hours, contract status, and location belong in `concerns`. A role the candidate can do loses points only when the skills or experience don't match the posting's stated requirements. The ranking then measures fit rather than availability.
+
+Assess both sides of the case. `alignment` states the highlight, the strongest evidence that the candidate fits. `concerns` states what works against the candidate, such as a missing qualification, a tenure gap, part-time hours, a contract term, a location that needs a move, or pay below the floor. The report prints the pair on one line under the requirements row, and the CSV gains a `concerns` column. A keyword-only run fills `concerns` from the posting keywords the resume misses.
+
+`submit_judgments` also takes `portfolio_highlight`. Pass the portfolio pieces for that posting, and the card prints them as **Highlight**. A card with no submitted highlight lists the pieces Sweepy found.
+
+## Portfolio support
+
+Sweepy reads a portfolio once per sweep and lists its pieces on every card. It collects the portfolio before it builds the profile. Give it an online URL or a local `.pdf`, `.docx`, `.md`, `.txt`, or `.html` file. Pass one entry per resume track when you target more than one role family.
+
+```yaml
+portfolio:
+  # One entry per resume track. An entry without `track` serves every track.
+  sources:
+    - track: "UX Writer Resume"
+      url: "https://example.com/work"
+    - track: "Technical Writer Resume"
+      path: "C:/portfolios/technical-writing.pdf"
+  pieces_per_card: 3
+```
+
+Sweepy fetches an online portfolio to read its headings and links. When a page blocks the request, the card keeps the link and skips the piece list. The PDF card shows the portfolio and its pieces. The CSV and JSON exports add `portfolio_url`, `portfolio_pieces`, and `portfolio_highlight`.
+
+To attach a portfolio to a saved profile, call `set_portfolio` from the MCP or answer the wizard's portfolio step. A headless setup accepts `--portfolio` and `--portfolio-track`.
+
 `render_report` takes a `playbook` argument for the closing strategy box. Write plain prose. Sweepy escapes ampersands and turns newlines into line breaks. `**bold**` renders as bold text, and angle brackets become plain text. Sweepy stores the playbook with the session, and a later render reuses it instead of the generated one. Starting a new sweep clears it.
 
 In `agent` mode, `render_report` refuses to build a mixed report. It returns an error listing the unassessed job ids. The assistant reads that list and submits judgments for the missing ids. Profiles that want keyword-only reports set `report.assessment: "keyword"`. A command-line run also reports keyword overlap, since no agent supplies judgments. Set `SWEEPY_REQUIRE_JUDGMENTS=1` when the gate must apply to every profile and to `export_report` as well.
@@ -299,10 +331,7 @@ their default configuration checks. Provide `sources_config` to pick engines
 explicitly. OpenRoles needs a slug for each company. Apify needs explicit opt-in
 because it may incur charges.
 
-The assistant can verify results and fill coverage gaps with its search tools. It should
-inspect skipped sources, check postings against employer career pages, and add verified
-omissions to the report. It must label inaccessible listings as unverified and disclose
-when it can't confirm complete coverage.
+The assistant can verify results and fill gaps with its search tools. It should check skipped sources and postings against employer career pages. It should add verified omissions and label inaccessible listings as unverified. It must disclose when it can't confirm full coverage.
 
 Read [MCP integration](https://pvega62.github.io/software/docs/sweepy/reference/mcp-integration) for the setup steps.
 

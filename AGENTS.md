@@ -24,6 +24,10 @@ assess each role against the candidate's resume and available job evidence.
 create_profile → run_sweep → get_sweep_status (until completed) → get_jobs → assess roles → submit_judgments → render_report
 ```
 
+Ask the user for a portfolio before `create_profile`. Sweepy lists each portfolio's pieces
+on the cards, and `submit_judgments` records the pieces to send for each role. For an
+existing profile, `set_portfolio` adds or changes the portfolio without a rebuild.
+
 `run_sweep` answers in bounded time. A live sweep runs in the background, so a long
 scrape returns `sweep_status: "running"` with a `job_id` instead of blocking the client
 past its tool timeout. Poll `get_sweep_status` until it reports `completed`.
@@ -65,6 +69,11 @@ verification and coverage where its host provides search tools:
   posting against the user's titles, location, workplace preferences, salary floor,
   must-have skills, and resume. Correct deterministic match scores only with an
   independent, evidence-based `submit_judgments` assessment.
+- A card that reports `needs_description: true` arrived without a posting body, usually
+  from Built In, Google Jobs, or Apple. Fetch the posting yourself and pass the text to
+  `submit_judgments` as `description` before judging it. Calling `get_jobs` with
+  `needs_description=true` lists those cards on their own, so none of them silently
+  disappear from the review.
 - When the host provides web or search tools, use them to verify promising listings
   against employer career pages or the linked ATS, and search for relevant roles that
   Sweepy missed. Use `import_jobs` to add only verified, non-duplicate postings to the
@@ -92,17 +101,33 @@ Builds and saves a YAML configuration profile in the `profiles/` directory.
   - `remote_only`: set `True` if the candidate accepts only remote roles. Defaults to `False`.
   - `include_hybrid`: set `True` to include hybrid roles alongside remote or on-site roles. Defaults to `True`.
   - `min_salary`: lowest acceptable base salary as an integer (such as `90000`). Use `0` if unconstrained.
+  - `filter_titles`: set `True` to keep only aggregator postings whose title contains one of the searched titles. Board queries are fuzzy, so a `Documentation Engineer` search also returns plain software engineers. The ATS and engine readers already filter this way; JobSpy does not unless this is on. Defaults to `False`.
   - `must_have_skills`: optional list of mandatory keywords to boost ranking (such as `["API Documentation", "Markdown"]`).
   - `platforms`: optional dictionary enabling or disabling scrapers (such as `{"greenhouse": True, "ashby": True, "lever": True, "workable": True, "aggregators": False}`).
-  - `sources_config`: optional dictionary merged into the profile's `sources` block (such as `{"enabled": ["jobspy", "openroles"], "openroles": {"companies": ["figma"]}}`). Every enabled engine validates before the file is written, so a bad block returns an error instead of a broken profile.
+  - `sources_config`: optional dictionary merged into the profile's `sources` block (such as `{"enabled": ["jobspy", "openroles"], "openroles": {"companies": ["figma"]}}`). Every enabled engine validates before the file is written, so a bad block returns an error instead of a broken profile. Set `greenhouse.discovery` to `"broad"` (or `greenhouse.broad` to `True`) to sweep the bundled 619-slug list in `data/sources/greenhouse_slugs_broad.txt` alongside the boards the profile names, and `greenhouse.concurrency` to set how many boards run at once (default `20` in broad mode, `1` otherwise).
   - `cache_config`: optional cache settings with `enabled` and `ttl_seconds` fields.
   - `orchestrator_config`: optional `timeout_per_source_seconds` and `circuit_breaker` settings (`failure_threshold`, `cooldown_seconds`).
   - `history_config`: optional cross-run settings with `enabled`, `retention_days` (default `4`), `match` (`url` or `url+role`), and `path` fields.
-  - `job_tracking`: set the CSV tracking columns on or off. Defaults to `True`.
+  - `resume_tracks`: optional list of resume tracks. Each entry holds `name`, a `path` to that track's PDF or DOCX, a `color`, and `route_keywords`. Sweepy routes each posting to the matching track.
+  - `portfolios`: optional list of portfolio entries. An entry holds `track`, `url`, `path`, and `pieces` of `{title, url, tags}`. `track` names a resume track, `url` points at an online portfolio, `path` points at a local PDF, DOCX, Markdown, text, or HTML file, and `pieces` lists explicit pieces. An entry without `track` serves every track. Every card then lists that portfolio's pieces.
+  - `pieces_per_card`: how many portfolio pieces a card lists (1-10, default `3`).
+  - `job_tracking`: set the CSV tracking columns on or off. Defaults to `True`. Ask the user for a portfolio before the call. Pass `portfolios` and `resume_tracks` together when the candidate keeps one portfolio and one resume per role family. The response reports `portfolio_configured` and `portfolio_sources`. It also returns `portfolio_guidance` for the next step.
   - Board keys: `BOARD_CATALOG` in `engine/engines.py` lists every searchable board per engine (8 `jobspy`, 5 `ats`, 12 `hirehunt`, 4 `openroles`, 33 `jobdrop`, 1 `apify`). The wizard's platform step reads that catalog, which means a new board doesn't need extra UI code. Headless callers set boards through `sources_config` (`sources.jobspy.sites`, `sources.hirehunt.sources`, `sources.openroles.ats`, `sources.jobdrop.sites`).
   - `output_filename`: optional explicit destination YAML path. Defaults to `profiles/{name}_{title}.yaml`.
 
-### 2. `run_sweep`
+### 2. `set_portfolio`
+Adds or updates the portfolios a saved profile submits. Call it after the user names a portfolio. An existing profile then takes the new portfolio without a rebuild.
+
+- **When to call.** Call when the user gives a portfolio URL or file after the profile exists, or when they want a separate portfolio per resume track.
+- **Key parameters**:
+  - `profile_path`: path to an existing profile YAML file.
+  - `portfolios`: list of entries with the same fields as `create_profile`. Pass an empty list with `replace: true` to remove every portfolio.
+  - `replace`: `true` drops the saved portfolios before adding these. `false` keeps the saved entries, and a new entry replaces the saved one for the same track.
+  - `pieces_per_card`: how many portfolio pieces a card lists (1-10). Leave unset to keep the saved value.
+- **Track names.** A `track` value must match a `resume.tracks[].name` entry, case-insensitive. A profile with no resume tracks accepts entries without a `track` only.
+- **Returns.** The profile path, the resume tracks the profile defines, and the portfolio state.
+
+### 3. `run_sweep`
 Executes the 5-stage discovery pipeline: discovery, validation, deterministic keyword scoring, report generation, and CSV/JSON export. It populates the session with preliminary cards and returns their ids. This tool does not run LLM assessment; continue through `get_jobs`, `submit_judgments`, and `render_report` for the default user-requested search workflow.
 
 A live sweep needs minutes of board scraping, so the pipeline runs on a background thread and the tool call waits at most `wait_seconds` (default `45`, tunable through `SWEEPY_MCP_WAIT_SECONDS`). While the sweep runs, the response reads `sweep_status: "running"` and carries a `job_id`.
@@ -112,11 +137,15 @@ A live sweep needs minutes of board scraping, so the pipeline runs on a backgrou
 - **Repeated calls.** Calling `run_sweep` again with the same profile while a sweep is running rejoins that job instead of starting a second scrape.
 - **Default profile.** When `profile_path` is omitted, the sweep uses the last saved profile, then the newest profile in `profiles/`, then `profiles/custom_profile.yaml`, `profiles/paralegal_nyc.yaml`, and `config.sample.yaml`. A profile saved by `create_profile` becomes the last saved profile.
 - **Previously seen postings.** The sweep skips postings recorded in an earlier run and reports `previously_seen_count` and `new_count`. Pass `include_seen=true`, or set `history.enabled: false` in the profile, to report every posting.
+- **Filename stamp.** Pass `timestamp` as `YYYY-MM-DD-HHMMSS` (or ISO 8601) to name the artifacts with the user's local time. Read that clock from the conversation. Without it, the stamp follows the profile's `export.timezone`, which defaults to `local`.
+- **Greenhouse boards.** The built-in reader takes its board list from `sources.greenhouse.boards`, then from `data/sources/greenhouse_boards.txt`. With `sources.greenhouse.discovery: broad`, it adds the 619 slugs in `data/sources/greenhouse_slugs_broad.txt` and reads them `sources.greenhouse.concurrency` at a time (default `20`). Most broad slugs have no board. Sweepy logs one warning with the failure count and the first ten slugs. Treat that warning as expected, and report the count only when it rises far above the usual dead-slug rate.
 
 Every MCP sweep enables a timestamped debug log and returns its path in `debug_log`. The log records the pipeline stages and source diagnostics without writing to the MCP stdout stream.
 Each sweep log also records its execution method as `wizard`, `cli`, or `mcp`.
 
 Enabled engines run concurrently behind one adapter, so the sweep takes about as long as the slowest engine. A single engine that times out or fails does not fail the call; report `skipped_sources` to the user when it comes back non-empty, naming the engine and the reason (`timeout`, `circuit_open`, or the error text).
+
+Aggregator boards that hand back a search query instead of a posting URL are resolved before the card is built. `engine/resolve.py` probes the employer's Greenhouse, Ashby, Lever, and Workable boards with a title match, and the card then carries the real posting link. A row that cannot be resolved keeps its search link and reports `url_unresolved: true`, so `get_jobs` and the report never present a search page as an application link.
 
 When `create_profile` receives no `sources_config`, it enables the built-in engines
 and every installed optional engine whose default configuration passes preflight.
@@ -132,7 +161,7 @@ other engines. Do not install optional packages automatically. Mention optional
 engines that need installation or configuration when the user asks to use every
 engine.
 
-### 3. `get_sweep_status`
+### 4. `get_sweep_status`
 Reports on, or waits for, a sweep started by `run_sweep`. It also applies the finished sweep's cards to the live session, so `get_jobs`, `submit_judgments`, and `render_report` work right after it reports `completed`.
 
 - **When to call.** Whenever `run_sweep` returns `sweep_status: "running"`. Repeat until it returns `sweep_status: "completed"`, then inspect the roles with `get_jobs`.
@@ -141,7 +170,7 @@ Reports on, or waits for, a sweep started by `run_sweep`. It also applies the fi
   - `wait_seconds`: longest time to block before returning progress (default `45`, clamped to `0..600`).
 - **Response.** `sweep_status` reads `running`, `completed`, or `failed`. A running job also reports `progress` (`step`, `total`, `label`) and `elapsed_seconds`; a completed job reports the same summary fields as `run_sweep`.
 
-### 4. `get_results`
+### 5. `get_results`
 Retrieves top matching roles, playbook recommendations, and artifact paths from a completed sweep without re-running discovery.
 
 - **When to call.** Call when the user asks for matches, summaries, top roles, or playbook recommendations after a sweep.
@@ -150,7 +179,7 @@ Retrieves top matching roles, playbook recommendations, and artifact paths from 
   - `results_dir`: directory containing result JSON files. Defaults to `"results"`.
   - `limit`: number of top roles to return. Defaults to `10`.
 
-### 5. `export_report`
+### 6. `export_report`
 Rebuilds PDF, PNG, CSV, or JSON artifacts from existing sweep results without re-running discovery or scoring.
 
 - **When to call.** Call when the user requests a regenerated PDF or exported CSV. Also call when the user specifies a custom destination directory.
@@ -162,7 +191,7 @@ Rebuilds PDF, PNG, CSV, or JSON artifacts from existing sweep results without re
   - `output_dir`: optional target output folder. If omitted, writes to `results/`.
   - `job_tracking`: optional override for the profile's `export.tracking` setting on a CSV export. Leave unset to follow the profile.
 
-### 6. `get_jobs`
+### 7. `get_jobs`
 Returns the card records held in the current sweep session, ranked by match.
 
 - **When to call.** After `run_sweep`, to inspect the deterministic card records before supplying judgment.
@@ -170,20 +199,36 @@ Returns the card records held in the current sweep session, ranked by match.
   - `profile_stem`: optional profile identifier to load a persisted session from disk.
   - `results_dir`: directory holding `report_session.json`. Defaults to `"results"`.
   - `limit`: optional number of cards to return (omit to return all).
+  - `needs_description`: optional filter. `true` returns only cards whose posting body is missing, `false` only cards that carry one.
+- **Posting body.** `description` contains the whole posting unless the profile sets `export.description_chars` above zero, and a cut body ends with a `[Posting truncated ...]` notice. Treat the text as complete. Never conclude that a salary band or a requirement is missing from the posting because you didn't see it.
+- **Unreadable cards.** Some boards (Built In, Google Jobs, Apple) return a title and URL with no posting body. Those cards report `needs_description: true`, score low on overlap because a title cannot state requirements, and sort last. The payload reports `needs_description_count`, so the assessment step knows how many exist. Read the posting URL yourself, then pass the text to `submit_judgments` as `description`. That clears the flag and gives the report real requirement text. Never present an unreadable card as a match without doing this.
+- **Portfolio fields.** Each card reports `portfolio_url`, `portfolio_path`, `portfolio_pieces`, `portfolio_fit`, and `portfolio_highlight`. `portfolio_pieces` comes from the portfolio for the card's resume track, and `portfolio_fit` carries the agent's coverage score once submitted. The payload also reports `portfolio_configured`, `portfolio_sources`, and `portfolio_guidance`.
+- **Resume documents.** The payload reports `resume_documents`, one entry per resume file with the tracks that use it and the parsed text, plus `resume_default_path`, `resume_configured`, and `resume_guidance`. Judge the parsed text, never the profile's `must_have_skills` or `synonyms`, which only feed the deterministic keyword pass. Read the document the way a recruiter reads it: transferable skills, scope and seniority per bullet, domain, tools, and the outcomes each line proves. Then score it the way the posting's applicant tracking system parses it. A term the parser can read in a standard Experience or Skills section counts as evidence; the same term inside a table, header, footer, image, or two-column sidebar may never reach a person, so weigh it lower. Name the ATS family when the apply URL reveals it, and record in `concerns` what that parser would lose.
 
-### 7. `submit_judgments`
+### 8. `submit_judgments`
 Overrides a job's deterministic card fields with LLM-supplied judgment.
 
 - **When to call.** After reviewing `get_jobs`, to supply your own `match_pct`, `resume_track`,
-  `domain`, `summary`, `requirements`, `alignment`, or `has_extended_response`.
+  `domain`, `summary`, `requirements`, `alignment`, `concerns`, or `has_extended_response`.
 - **Key parameters**:
   - `job_id`: stable job id returned by `run_sweep` or `get_jobs`.
-  - `match_pct`: LLM-assessed match percentage (0-100). Set this only after independently comparing the candidate's resume and preferences with available job evidence. Do not reuse the deterministic keyword-overlap score. Supplying it flips the report label from `KEYWORD OVERLAP` to `MATCH` for that card.
-  - `resume_track`, `resume_color`, `domain`, `summary`, `requirements`, `alignment`,
+  - `match_pct`: LLM-assessed match percentage (0-100). Set this only after independently comparing the candidate's resume and preferences with available job evidence. Score the parsed resume text from `get_jobs.resume_documents`, not the profile's keyword list. Weigh transferable skills the way a recruiter would, then score the file the way the posting's ATS parses it: a term in a standard Experience or Skills section counts, while the same term inside a table, header, footer, image, or two-column sidebar may never reach a person and weighs less. Do not reuse the deterministic keyword-overlap score. Supplying it flips the report label from `KEYWORD OVERLAP` to `MATCH` for that card. It measures resume and experience fit against the bar the posting states; keep portfolio coverage in `portfolio_fit` instead of folding it in. Leave employment logistics out of the score: part-time hours, contract status, and location go in `concerns`, never into a lower `match_pct`.
+  - `portfolio_fit`: how well the track's portfolio covers what the posting asks for (0-100). The report prints it beside `match_pct`, so the resume case and the sample case stay separate and auditable. Score it against the artifacts the posting names: 90-100 for the same artifact in the same domain, 50-69 when only a transferable artifact exists, and below 30 when the portfolio holds no sample of what is asked. Leave it unset when the card has no portfolio.
+  - `alignment`: the highlight. State the strongest evidence that the candidate fits and the move that uses it.
+  - `concerns`: what works against the candidate. Name unmet requirements, seniority or tenure gaps, domain mismatches, on-site expectations, part-time hours, a contract term, a location that needs a move, or pay below the floor, and cite the posting text. Write `None identified` only when the posting states no real obstacle. The report renders this as **Working Against You**, and it gives the reader the counterweight to the highlight.
+  - `resume_track`, `resume_color`, `domain`, `summary`, `requirements`,
     `has_extended_response`, `app_format`, `comp`, `benefits`, `page_theme`: optional overrides.
     Sweepy merges only non-null fields.
+  - `portfolio_highlight`: the portfolio pieces to send with this application, written as
+    plain text. Read `portfolio_pieces` from the card and choose the one to three pieces
+    that fit the posting. Leave it unset when the card has no portfolio, and when the
+    posting states no portfolio requirement.
+  - `description`: the posting body you read from a card flagged `needs_description`.
+    Supplying it clears the flag, so the card stops sorting as unreadable and the report
+    prints the real requirement text. Pass `summary` and `requirements` too when the
+    derived rows should match what you read.
 
-### 8. `import_jobs`
+### 9. `import_jobs`
 Appends agent-found jobs (canonical card schema) into the current session.
 
 - **When to call.** When your web search found roles the deterministic scrapers missed.
@@ -191,19 +236,20 @@ Appends agent-found jobs (canonical card schema) into the current session.
   - `jobs_json`: a JSON string encoding a list of card records.
   - `validate`: optional. Set it to `true` to run URL validation before importing (default `false`, because the agent already vetted the links).
 
-### 9. `render_report`
+### 10. `render_report`
 Renders the cards PDF from the current session, writing through the sandbox.
 
 - **When to call.** After `submit_judgments` and/or `import_jobs`, to produce the final report.
 - **Key parameters**:
   - `profile_stem`: optional profile identifier to load a persisted session from disk.
   - `results_dir`: results directory. Defaults to `"results"`.
-  - `output_filename`: optional explicit output PDF path (must stay inside the workspace).
+  - `output_filename`: optional explicit output PDF path (must stay inside the workspace). When omitted, Sweepy writes `{profile_stem}_mcp_{YYYY-MM-DD-HHMMSS}.pdf` into the results directory, mirroring the CLI's dated report names with an `mcp` marker.
+  - `timestamp`: the user's local time for that default filename, as `YYYY-MM-DD-HHMMSS` or ISO 8601. It applies only when `output_filename` stays empty.
   - `playbook`: optional plain-text strategy note. Sweepy escapes ampersands and angle brackets, converts newlines to line breaks, and renders `**bold**`. The note is saved with the session, so a later call without it reuses the saved text. Empty with nothing saved generates a deterministic playbook.
 
 Returns `pdf_report`, `pages`, `card_count`, and `playbook_saved`.
 
-### 10. `convert_document`
+### 11. `convert_document`
 Converts any supported document to PDF.
 
 - **When to call.** When the user hands you a résumé, notes file, or other document that isn't a PDF and wants a PDF copy. `create_profile` needs a PDF input.
@@ -212,7 +258,7 @@ Converts any supported document to PDF.
   - `pdf_path`: optional output PDF path. Blank saves the PDF next to the source file.
 - **Behavior.** DOCX files rebuild through `python-docx` + `reportlab`, with a `docx2pdf` fallback when Microsoft Word is available. Legacy `.doc` files need Word. Text and Markdown render with headings and bullets, and `.pdf` sources pass through untouched. The output must stay inside the workspace sandbox unless you set `SWEEPY_ALLOW_EXTERNAL_WRITES`.
 
-### 11. `convert_docx`
+### 12. `convert_docx`
 Converts a `.docx` file to PDF and nothing else.
 
 - **When to call.** When you know the file is a DOCX and want the Word-aware path. Prefer `convert_document` for any other extension.
@@ -221,7 +267,7 @@ Converts a `.docx` file to PDF and nothing else.
   - `pdf_path`: optional output PDF path. Blank saves the PDF next to the DOCX.
 - **Behavior.** Uses `python-docx` + `reportlab` first, then falls back to `docx2pdf` when Microsoft Word is available. The output must stay inside the workspace sandbox unless you set `SWEEPY_ALLOW_EXTERNAL_WRITES`.
 
-### 12. `clear_history`
+### 13. `clear_history`
 Forgets the postings Sweepy already reported so the next sweep can report them again.
 
 - **When to call.** When the user asks to see roles from earlier sweeps again, or wants to start a fresh search cycle.
@@ -241,19 +287,22 @@ If the user doesn't have a profile, ask for:
 - Target job titles
 - Location preference (remote, hybrid, or specific city)
 - Path to their résumé PDF or DOCX file
+- An online portfolio URL, or a local PDF, DOCX, Markdown, text, or HTML portfolio file
 - Any salary floor or must-have skill keywords
 
-Don't require every optional field before proceeding; sensible defaults exist for salary (`0`), platforms, and hybrid preferences.
+Don't require every optional field before proceeding; sensible defaults exist for salary (`0`), platforms, and hybrid preferences. A candidate with no portfolio is a normal case: create the profile without one and move on.
+
+When the candidate targets more than one role family, ask which resume and which portfolio serve each track. Pass both to `create_profile` as `resume_tracks` and `portfolios`.
 
 ### Build the profile
-Call `create_profile`. Tell the user where Sweepy saved the configuration file, and cite its path.
+Call `create_profile`. Tell the user where Sweepy saved the configuration file, and cite its path. Report `portfolio_configured` and the portfolio entry for each track. When the profile already exists and the user names a portfolio, call `set_portfolio` instead of rebuilding it.
 
 ### Execute and assess the sweep
 Call `run_sweep` with the profile path. Note to the user that live board scraping and uptime verification take a few minutes. Explain that its initial scores reflect keyword overlap only, not model judgment.
 
 When the response reads `sweep_status: "running"`, call `get_sweep_status` with the returned `job_id` and repeat until it reads `completed`. Report the step label while you wait so the user sees progress instead of a stalled request.
 
-For the default workflow, call `get_jobs` and inspect the available details for the roles. Compare each assessable role with the candidate's resume and preferences, then call `submit_judgments` with an independently determined `match_pct` and evidence-grounded summary, requirements, and alignment. Assess all relevant cards returned by `get_jobs`; do not copy keyword scores or fabricate missing details. If evidence is insufficient, say so and retain the keyword-overlap label for those roles. Call `render_report` after submitting judgments.
+For the default workflow, call `get_jobs` and inspect the available details for the roles. Read `resume_documents` in that payload, which holds the parsed text of each resume track, and judge that text instead of the profile's `must_have_skills` and `synonyms`. Those keywords only feed the deterministic pass, so scoring from them measures the YAML, not the candidate. Compare each assessable role with the resume and preferences, then call `submit_judgments` with an independently determined `match_pct` and evidence-grounded summary, requirements, alignment, and concerns. Read the resume the way a recruiter reads it, including transferable skills, the scope and seniority behind each bullet, domain, tools, and outcomes. Score the file the way the posting's applicant tracking system parses it: evidence in a standard Experience or Skills section counts, while the same term inside a table, header, footer, image, or two-column sidebar may never reach a person and weighs less. Name the ATS family when the apply URL reveals it, and record in `concerns` what that parser would lose. Score qualifications only: part-time hours, contract status, and location belong in `concerns`, not in a reduced `match_pct`. Assess all relevant cards returned by `get_jobs`; do not copy keyword scores or fabricate missing details. Every judgment states both sides: `alignment` holds the highlight that favors the candidate, and `concerns` holds the obstacle that works against them. A card with a highlight and no stated obstacle reads as a sales pitch, so name the gap even when the fit is strong. If evidence is insufficient, say so and retain the keyword-overlap label for those roles. Call `render_report` after submitting judgments.
 
 Send the whole assessment as one `judgments` list, with a `job_id` and `match_pct` per entry, so 24 roles cost one call instead of 24. `run_sweep` reports `assessment_mode` and `assessed_count`; the default `agent` mode makes `render_report` refuse a mixed report and return the unassessed job ids. `report.assessment: keyword` restores keyword-only reports, and `SWEEPY_REQUIRE_JUDGMENTS=1` extends the gate to every profile and to `export_report`.
 
@@ -265,8 +314,10 @@ Format match results using markdown tables and structured lists:
 - Provide active Markdown links to each live job posting.
 - Show company name, location, and workplace model (Remote, Hybrid, On-site).
 - Include posted salary ranges when detected.
-- Highlight candidate strengths and résumé keywords that triggered the match.
+- Highlight candidate strengths and résumé keywords that triggered the match. Name the transferable skills the recruiter would credit, not only the words the posting repeats.
+- State what works against the candidate on each posting. Pair the highlight with the specific obstacle, such as a missing requirement, a tenure gap, or a pay band below the floor.
 - Surface strategic playbook recommendations (such as recommended portfolio samples or talking points).
+- State the portfolio pieces you chose for each role. The card reports them as `portfolio_highlight`.
 
 ### Export on demand
 Offer to generate custom exports or regenerate the styled PDF report if the user requests saving files to specific directories.
@@ -295,10 +346,10 @@ The wizard opens its main menu. There you run a sweep with the loaded profile, c
 
 The launchpad shows six tiles:
 
-- **Launch Sweep**: run your job search now
+- **Start Sweep**: run your job search now
 - **Build Profile**: set up your job search
 - **Load Profile**: open a search you saved
-- **Sweep Settings**: change ranking, cards, and history
+- **Sweep Settings**: change ranking, cards, history, and the report filename timezone
 - **Sweepy's Toolbox**: profile edits, logs, and help
 - **Exit Sweepy**: save changes and close
 
@@ -328,6 +379,19 @@ python swee.py --setup --non-interactive \
   --resume C:/resumes/alex.pdf \
   --sources jobspy,ats
 ```
+
+Add a portfolio to the same headless setup. Repeat `--portfolio` for each source, and
+prefix a value with a track name from the saved profile to attach it to that track:
+
+```bash
+python swee.py --setup --non-interactive \
+  --profile profiles/alex_rivera_technical_writer.yaml \
+  --portfolio https://alexrivera.dev/work \
+  --portfolio "UX Writer=C:/portfolios/ux-samples.pdf"
+```
+
+`--portfolio-track` applies to the values without a `TRACK=` prefix. A track name must
+match a `resume.tracks[].name` entry, or the setup stops with an error.
 
 Run a sweep with the last saved profile:
 

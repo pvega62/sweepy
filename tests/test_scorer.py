@@ -380,6 +380,27 @@ def test_posting_without_text_falls_back_to_resume_overlap():
     assert result["match_score"] == int(1 / 2 * 100)
 
 
+def test_title_only_posting_cannot_claim_full_requirement_coverage(tmp_path):
+    # Boards such as Built In return postings without a body, so the only
+    # extractable "requirements" are the words of the title. Full coverage from a
+    # title alone would hand every such posting the same top score.
+    resume_pdf = tmp_path / "resume.pdf"
+    _make_resume_pdf(
+        resume_pdf,
+        "Skills\nPython, SQL, React, Docker, Kubernetes, Figma, Jira, Confluence,"
+        " Markdown, Git, Postman, Swagger\nExperience\nTechnical Writer",
+    )
+
+    scored, _ = score_jobs(
+        [_job("Technical Writer", "")], str(resume_pdf), ["technical writer"], 1.5
+    )
+    result = scored[0]
+
+    assert result["job_keywords"]
+    assert result["job_coverage"] == 100
+    assert result["match_score"] < 50
+
+
 def test_score_is_clamped_and_bounded(tmp_path):
     resume_pdf = tmp_path / "resume.pdf"
     _make_resume_pdf(resume_pdf, "Python React SQL")

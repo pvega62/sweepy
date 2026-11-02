@@ -32,7 +32,53 @@ jobs:
         run: ruff check .
 
       - name: Test with pytest
-        run: pytest -q --cov=swee --cov=server --cov=engine.scorer --cov-report=term --cov-report=xml
+        run: pytest -q --junitxml=test-results.xml --cov=swee --cov=server --cov=engine.scorer --cov-report=term --cov-report=xml
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pytest-results-py${{ matrix.python-version }}
+          path: test-results.xml
+          if-no-files-found: ignore
+
+      - name: Report pytest failures
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -f test-results.xml ]; then
+            echo "No test result file found." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+
+          root = ET.fromstring(Path("test-results.xml").read_text(encoding="utf-8"))
+          failures = []
+          for case in root.iter("testcase"):
+              failure = case.find("failure")
+              error = case.find("error")
+              node = failure if failure is not None else error
+              if node is not None:
+                  failures.append((case, node))
+
+          print("### Pytest failures")
+          if not failures:
+              print("No failures found.")
+          for case, node in failures[:20]:
+              print(f"- {case.get('classname', '')}::{case.get('name', '')}")
+              details = (node.text or node.get("message") or "").strip()
+              title = f"{case.get('classname', '')}::{case.get('name', '')}"
+              annotation = details.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title={title}::{annotation[:2000]}")
+              if details:
+                  print()
+                  print("```text")
+                  print(details[:2000])
+                  print("```")
+          PY
+          exit 0
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v6

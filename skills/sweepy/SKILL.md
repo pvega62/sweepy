@@ -1,6 +1,6 @@
 ---
 name: sweepy
-description: Use /sweepy to find jobs through Sweepy's MCP, assess roles against the user's resume with LLM judgments, review matches, and export reports.
+description: Use /sweepy to find jobs through Sweepy's MCP, ask for the user's portfolio and resume tracks, assess roles against them with LLM judgments, review matches, and export reports.
 ---
 
 # Sweepy
@@ -34,7 +34,12 @@ after editing the configuration.
 
 ## Start a new LLM-assisted search
 
-1. Call `create_profile` with the candidate's name, target job titles, location, and
+1. Ask the user for a portfolio before you build the profile. Accept an online URL, a
+   local PDF, DOCX, Markdown, text, or HTML file, or none. Pass what they give you as
+   `portfolios`, one entry per resume track when they target more than one role family,
+   and pass `resume_tracks` when they keep a separate resume for each track. Sweepy lists
+   each portfolio's pieces on the cards. For a saved profile, call `set_portfolio` instead.
+2. Call `create_profile` with the candidate's name, target job titles, location, and
    resume PDF or DOCX path. Optional fields (remote/hybrid preference, minimum salary,
    must-have skills) use defaults when omitted. Without `sources_config`, the MCP
    enables built-in engines and installed optional engines that pass default
@@ -48,7 +53,7 @@ after editing the configuration.
    `orchestrator_config.timeout_per_source_seconds` and its `circuit_breaker` fields
    to tune per-engine resilience. Set `history_config` (`enabled`, `retention_days`,
    `match`, `path`) to control how long reported postings stay hidden.
-2. Call `run_sweep` with the saved profile path. This discovers and validates postings,
+3. Call `run_sweep` with the saved profile path. This discovers and validates postings,
    then generates deterministic keyword-overlap scores. It does not perform LLM
    assessment by itself; tell the user that these initial scores are preliminary.
    Sweepy removes duplicate URLs and same-role postings across boards by default. Pass
@@ -59,7 +64,7 @@ after editing the configuration.
    is four days. When the user asks for roles they saw before, pass `include_seen=true`
    or call `clear_history` to forget the profile's history. A sweep with no new postings
    reports `previously_seen_count` and a `message`; relay it as a normal result.
-3. The pipeline scrapes live boards for minutes, so it runs in the background. When
+4. The pipeline scrapes live boards for minutes, so it runs in the background. When
    `run_sweep` returns `sweep_status: "running"`, call `get_sweep_status` with the
    returned `job_id` and repeat until it reports `completed`. Each call waits only its
    own `wait_seconds`, which keeps every request inside the client timeout. The sweep
@@ -87,11 +92,40 @@ after editing the configuration.
 
 - By default, do not stop at keyword scores and do not wait for the user to request the
   LLM boost. Call `get_jobs` to inspect the available details for relevant roles.
+- Judge the resume document, not the profile. `get_jobs` returns `resume_documents` with
+  the parsed text of every track. The profile's `must_have_skills` and `synonyms` only
+  feed the deterministic keyword pass, so scoring from them measures the YAML instead of
+  the candidate. Read the file the way a recruiter reads it: transferable skills, scope
+  and seniority per bullet, domain, tools, and outcomes.
+- Score the resume the way the posting's applicant tracking system parses it. A term the
+  parser can read in a standard Experience or Skills section counts as evidence. The same
+  term inside a table, header, footer, image, or two-column sidebar may never reach a
+  person, so weigh it lower. Name the ATS family when the apply URL reveals it (Workday,
+  Greenhouse, Lever, Ashby, iCIMS, Taleo, Workable, SmartRecruiters) and say in
+  `concerns` what that parser would lose.
 - Compare each assessable role with the candidate's resume and stated preferences. Submit
   an independent `match_pct` and evidence-grounded card fields through `submit_judgments`.
   Never copy the deterministic overlap score into `match_pct` or invent unsupported job
   requirements. If evidence is insufficient, disclose the limitation and retain the
   `KEYWORD OVERLAP` label for that role.
+- Score qualifications only. Part-time hours, contract status, and location are
+  logistics, so they belong in `concerns` and never lower `match_pct`. A role the
+  candidate can do keeps its score even when the terms need negotiation.
+- Read the posting body as complete. `description` holds the whole posting unless the
+  profile sets `export.description_chars`, and a cut body ends with a
+  `[Posting truncated ...]` notice. Never report a requirement, salary band, or benefit
+  as absent because you didn't see it. Fetch the posting URL when a card has no body.
+- State both sides of every assessment. `alignment` states the highlight: the strongest
+  evidence that the candidate fits, plus the move that uses it. `concerns` states what
+  works against the candidate: unmet requirements, seniority or tenure gaps, domain
+  mismatches, on-site expectations, part-time hours, a contract term, or pay below the
+  floor. Cite the posting text, and write `None identified` only when the posting states
+  no real obstacle. The card renders
+  `concerns` as **Working Against You**. A one-sided pitch makes an incomplete
+  assessment.
+- Read `portfolio_pieces` on each card, pick the one to three pieces that fit the posting,
+  and pass them to `submit_judgments` as `portfolio_highlight`. Leave it unset when the
+  card has no portfolio. Tell the user which pieces you chose and why.
 - Call `render_report` after submitting judgments so the PDF reflects assessed matches.
 - Call `get_results` for initial sweep metadata, but treat scores labeled `KEYWORD OVERLAP`
   as unassessed. Present `NN% MATCH` only for cards with submitted LLM judgments.
@@ -119,7 +153,12 @@ python swee.py --run --include-seen    # report postings from earlier sweeps too
 python swee.py --run --reset-history   # forget earlier postings, then sweep
 python swee.py --docx resume.docx      # convert a DOCX resume to PDF
 python swee.py --convert notes.md      # convert any supported document to PDF
+python swee.py --setup --non-interactive --profile profiles/your_profile.yaml \
+  --portfolio https://example.com/work --portfolio "UX Writer=work/ux.pdf"
 ```
+
+`--portfolio` takes a URL or a local PDF, DOCX, Markdown, text, or HTML file. Repeat it for
+more sources, and prefix a value with a resume track name to attach it to that track.
 
 ## Notes
 
@@ -128,5 +167,7 @@ python swee.py --convert notes.md      # convert any supported document to PDF
   `run_sweep → get_sweep_status → get_jobs → assess roles → submit_judgments → render_report`.
 - `submit_judgments` upgrades a card to `NN% MATCH` only when the assistant supplies an
   independent, evidence-based assessment.
+- Every card reports the portfolio for its resume track in `portfolio_url` and
+  `portfolio_pieces`. `portfolio_highlight` holds the pieces the assistant chose to send.
 - Sweeps skip postings reported in an earlier run for the same profile. The default
   retention window is four days; `include_seen=true` or `clear_history` overrides it.

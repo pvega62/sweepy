@@ -39,6 +39,11 @@ EXPORT_COLUMNS = [
     'summary',
     'requirements',
     'alignment',
+    'concerns',
+    'portfolio_url',
+    'portfolio_pieces',
+    'portfolio_fit',
+    'portfolio_highlight',
     'description'
 ]
 
@@ -66,6 +71,8 @@ def export_to_csv(
             row['key_matches'] = ", ".join(row['key_matches'])
         if isinstance(row.get('missing_skills'), list):
             row['missing_skills'] = ", ".join(row['missing_skills'])
+        if isinstance(row.get('portfolio_pieces'), list):
+            row['portfolio_pieces'] = ", ".join(row['portfolio_pieces'])
         rows.append(row)
 
     columns = list(EXPORT_COLUMNS)
