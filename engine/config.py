@@ -1966,7 +1966,7 @@ MENU_EXIT = "Exit"
 MENU_TOOLBOX = "Open the toolbox"
 
 _MENU_TILES = [
-    ("01", "LAUNCH SWEEP", "Run your job search now", MENU_RUN),
+    ("01", "START SWEEP", "Run your job search now", MENU_RUN),
     ("04", "BUILD PROFILE", "Set up your job search", MENU_CREATE),
     ("02", "LOAD PROFILE", "Open a search you saved", MENU_LOAD),
     ("05", "SWEEP SETTINGS", "Ranking, cards, tracking", MENU_SCALING),

@@ -34,7 +34,11 @@ def load_workable_slugs() -> List[str]:
     return _load_lines("workable_slugs.txt")
 
 
-def load_greenhouse_boards() -> List[str]:
+def load_greenhouse_boards(broad: bool = False) -> List[str]:
+    if broad:
+        broad_items = _load_lines("greenhouse_slugs_broad.txt")
+        if broad_items:
+            return broad_items
     return _load_lines("greenhouse_boards.txt")
 
 

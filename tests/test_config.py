@@ -386,6 +386,7 @@ def test_main_menu_renders_profile_tiles_and_supports_horizontal_navigation(monk
         assert cfg._ask(question) == cfg.MENU_CREATE
 
     rendered = question.application.layout.container.content.text()
+    assert "START SWEEP" in "".join(fragment[1] for fragment in rendered)
     assert "BUILD PROFILE" in "".join(fragment[1] for fragment in rendered)
     assert "Current profile: Alex Rivera  /  2 titles  /  Ready" in "".join(
         fragment[1] for fragment in rendered

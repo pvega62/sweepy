@@ -108,11 +108,19 @@ after editing the configuration.
   Never copy the deterministic overlap score into `match_pct` or invent unsupported job
   requirements. If evidence is insufficient, disclose the limitation and retain the
   `KEYWORD OVERLAP` label for that role.
+- Score qualifications only. Part-time hours, contract status, and location are
+  logistics, so they belong in `concerns` and never lower `match_pct`. A role the
+  candidate can do keeps its score even when the terms need negotiation.
+- Read the posting body as complete. `description` holds the whole posting unless the
+  profile sets `export.description_chars`, and a cut body ends with a
+  `[Posting truncated ...]` notice. Never report a requirement, salary band, or benefit
+  as absent because you didn't see it. Fetch the posting URL when a card has no body.
 - State both sides of every assessment. `alignment` states the highlight: the strongest
   evidence that the candidate fits, plus the move that uses it. `concerns` states what
   works against the candidate: unmet requirements, seniority or tenure gaps, domain
-  mismatches, on-site expectations, or pay below the floor. Cite the posting text, and
-  write `None identified` only when the posting states no real obstacle. The card renders
+  mismatches, on-site expectations, part-time hours, a contract term, or pay below the
+  floor. Cite the posting text, and write `None identified` only when the posting states
+  no real obstacle. The card renders
   `concerns` as **Working Against You**. A one-sided pitch makes an incomplete
   assessment.
 - Read `portfolio_pieces` on each card, pick the one to three pieces that fit the posting,

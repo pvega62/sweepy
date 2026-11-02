@@ -267,7 +267,7 @@ def test_discover_sources_merges_and_dedupes(monkeypatch):
     monkeypatch.setattr(discovery, "_REQUEST_DELAY", 0)
     monkeypatch.setattr(discovery, "load_ashby_orgs", lambda: ["modal"])
     monkeypatch.setattr(discovery, "load_workable_slugs", lambda: [])
-    monkeypatch.setattr(discovery, "load_greenhouse_boards", lambda: [])
+    monkeypatch.setattr(discovery, "load_greenhouse_boards", lambda **_kwargs: [])
     monkeypatch.setattr(discovery, "load_lever_companies", lambda: [])
     monkeypatch.setattr(discovery, "load_builtin_categories", lambda: [])
     monkeypatch.setattr(
@@ -287,7 +287,7 @@ def test_discover_sources_isolates_failures(monkeypatch):
     monkeypatch.setattr(discovery, "_REQUEST_DELAY", 0)
     monkeypatch.setattr(discovery, "load_ashby_orgs", lambda: ["good", "bad"])
     monkeypatch.setattr(discovery, "load_workable_slugs", lambda: [])
-    monkeypatch.setattr(discovery, "load_greenhouse_boards", lambda: [])
+    monkeypatch.setattr(discovery, "load_greenhouse_boards", lambda **_kwargs: [])
     monkeypatch.setattr(discovery, "load_lever_companies", lambda: [])
     monkeypatch.setattr(discovery, "load_builtin_categories", lambda: [])
 
@@ -446,7 +446,7 @@ def _patch_seed_loaders(monkeypatch, **overrides):
     }
     values.update(overrides)
     for name, value in values.items():
-        monkeypatch.setattr(discovery, name, lambda v=value: v)
+        monkeypatch.setattr(discovery, name, lambda *_, v=value: v)
 
 
 def test_discover_sources_includes_greenhouse_and_lever(monkeypatch):
@@ -524,6 +524,62 @@ def test_discover_sources_enabled_false_disables_source(monkeypatch):
     )
     discovery.discover_sources({"greenhouse": {"enabled": False}}, titles=["technical"])
     assert calls == []
+
+
+def test_load_greenhouse_boards_broad_reads_the_broad_list(monkeypatch, tmp_path):
+    monkeypatch.setattr(sources, "DATA_DIR", str(tmp_path))
+    (tmp_path / "greenhouse_boards.txt").write_text("seed\n", encoding="utf-8")
+    (tmp_path / "greenhouse_slugs_broad.txt").write_text("broadco\n", encoding="utf-8")
+
+    assert sources.load_greenhouse_boards(broad=True) == ["broadco"]
+    assert sources.load_greenhouse_boards() == ["seed"]
+
+
+def test_load_greenhouse_boards_broad_falls_back_when_broad_list_is_empty(monkeypatch, tmp_path):
+    monkeypatch.setattr(sources, "DATA_DIR", str(tmp_path))
+    (tmp_path / "greenhouse_boards.txt").write_text("seed\n", encoding="utf-8")
+
+    assert sources.load_greenhouse_boards(broad=True) == ["seed"]
+
+
+def test_discover_sources_broad_mode_appends_and_dedupes_boards(monkeypatch):
+    monkeypatch.setattr(discovery, "_REQUEST_DELAY", 0)
+    _patch_seed_loaders(monkeypatch)
+    monkeypatch.setattr(
+        discovery, "load_greenhouse_boards", lambda broad=False: ["gitlab", "broadco"]
+    )
+    seen = []
+    monkeypatch.setattr(
+        discovery, "fetch_greenhouse_board", lambda board, titles=None: seen.append(board) or []
+    )
+
+    discovery.discover_sources(
+        {"greenhouse": {"boards": ["gitlab"], "discovery": "broad"}}, titles=["technical"]
+    )
+
+    assert set(seen) == {"gitlab", "broadco"}
+    assert len(seen) == 2
+
+
+def test_discover_sources_reports_concurrent_greenhouse_failures(monkeypatch, caplog):
+    monkeypatch.setattr(discovery, "_REQUEST_DELAY", 0)
+    _patch_seed_loaders(monkeypatch)
+
+    def flaky(board, titles=None):
+        if board == "stale":
+            raise requests.HTTPError("404 Not Found")
+        return [normalize_greenhouse(_greenhouse_job(), board)]
+
+    monkeypatch.setattr(discovery, "fetch_greenhouse_board", flaky)
+
+    with caplog.at_level("WARNING", logger="sweepy.engine.discovery"):
+        _, counts = discovery.discover_sources(
+            {"greenhouse": {"boards": ["gitlab", "stale"], "concurrency": 4}},
+            titles=["technical"],
+        )
+
+    assert counts.get("Greenhouse") == 1
+    assert any("1 of 2 boards failed" in record.getMessage() for record in caplog.records)
 
 
 def test_builtin_source_ignores_platforms_key(monkeypatch):

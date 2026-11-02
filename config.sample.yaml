@@ -104,6 +104,11 @@ sources:
   greenhouse:
     enabled: true
     boards: []          # e.g. ["databricks", "gitlab", "cloudflare", "robinhood"]
+    # Broad mode adds the bundled slug list in data/sources/greenhouse_slugs_broad.txt
+    # to whatever `boards` names. Most of those slugs have no board, so expect a
+    # summary warning that counts the failures.
+    discovery: standard # standard | broad
+    concurrency: 1      # boards read at once; broad mode defaults to 20
   ashby:
     enabled: true
     orgs: []            # e.g. ["modal", "camunda"]
@@ -174,9 +179,11 @@ export:
   # carry over to the next sweep of this profile. Set to false for raw data only.
   tracking: true
 
-  # Characters of posting text saved in the CSV and JSON. Sweepy cuts on a
-  # sentence boundary. Set to 0 to keep the whole posting.
-  description_chars: 1000
+  # Characters of posting text saved in the card, CSV, and JSON. Defaults to 0,
+  # which keeps the whole posting: the reader is an LLM, and a cut body is
+  # indistinguishable from a short one. A positive number cuts on a sentence
+  # boundary and appends an explicit truncation notice.
+  description_chars: 0
 
   # Clock behind the date and time in each report filename. "local" follows this
   # machine, "UTC" pins Coordinated Universal Time, and an IANA name such as

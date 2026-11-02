@@ -135,17 +135,22 @@ def test_get_tracks_implicit_single_track():
     assert tracks[0]["name"] == "Tech Writer"
 
 
-def test_enrich_truncates_description_to_the_default_limit():
-    card = enrich_jobs([_job(description="alpha " * 400)], _profile())[0]
-    assert len(card["description"]) <= 1000
-    assert card["description"].endswith("…")
+def test_enrich_keeps_the_whole_posting_by_default():
+    text = "alpha " * 400
+    card = enrich_jobs([_job(description=text)], _profile())[0]
+    assert card["description"] == text.strip()
+    assert "Posting truncated" not in card["description"]
 
 
-def test_enrich_reads_description_chars_from_the_export_settings():
+def test_enrich_labels_an_explicit_character_limit():
     profile = _profile()
     profile["export"] = {"description_chars": 60}
     card = enrich_jobs([_job(description="alpha beta gamma delta. " * 20)], profile)[0]
-    assert len(card["description"]) <= 61
+    body, marker, notice = card["description"].partition("\n\n[Posting truncated")
+    assert len(body) <= 61
+    assert body.startswith("alpha beta gamma delta.")
+    assert marker
+    assert "characters omitted" in notice
 
 
 def test_enrich_zero_description_chars_keeps_the_whole_posting():
@@ -198,12 +203,12 @@ def test_requirements_skip_a_mention_inside_body_text():
     assert card["requirements"] != "for internal content systems with engineers."
 
 
-def test_description_stays_trimmed_while_scans_read_the_whole_posting():
+def test_description_excerpt_is_cut_while_scans_read_the_whole_posting():
     profile = _profile()
     profile["export"] = {"description_chars": 120}
     card = enrich_jobs([_job(description=_POSTING)], profile)[0]
-    assert len(card["description"]) <= 121
-    assert "\n" not in card["description"]
+    assert card["description"].startswith("Northwind builds")
+    assert "[Posting truncated" in card["description"]
     assert "Docusaurus" not in card["description"]
     assert "Docusaurus" in card["requirements"]
 

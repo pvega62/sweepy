@@ -80,12 +80,14 @@ _SERVER_INSTRUCTIONS = (
     "plus `portfolio_pieces`. Choose the pieces that best fit each role and submit them with "
     "submit_judgments(portfolio_highlight=...) before render_report, so the report and the "
     "exports name the pieces to send. A card with no portfolio carries empty portfolio "
-    "fields, and that is not a failure. Score each role against the candidate's actual "
-    "resume, not the profile's keyword list: get_jobs returns `resume_documents` with the "
-    "parsed text of every resume track, so read that text, weigh transferable skills the "
-    "way a recruiter would, and score match_pct the way the posting's ATS parses the file. "
-    "A term a parser can read in a standard Experience or Skills section outranks the same "
-    "term buried in a table, header, or sidebar. State the resulting obstacle in concerns. "
+    "fields, and that is not a failure. Perform direct semantic qualification matching for "
+    "every role against the candidate's parsed resume text in resume_documents (via get_jobs). "
+    "Do not score by keyword overlap. Do not reduce match_pct for employment logistics "
+    "(such as part-time hours, contract status, or location); record logistics strictly "
+    "under concerns. "
+    "match_pct must reflect candidate qualifications and skills against the posting's "
+    "stated requirements. Weigh transferable skills as a recruiter would, and score ATS "
+    "readability of the layout. "
     "Stamp the artifacts with the user's clock: pass `timestamp` as YYYY-MM-DD-HHMMSS to "
     "run_sweep and render_report, using the local time you already know from the "
     "conversation, so each filename carries the user's date and time instead of the "
@@ -384,8 +386,6 @@ def _normalize_portfolio_block(
 # One parsed resume per file, keyed by (path, mtime), so calling get_jobs twice does
 # not re-parse the same PDF.
 _RESUME_TEXT_CACHE: dict = {}
-# A resume runs two pages at most; the cap only guards against a mislabeled document.
-_RESUME_TEXT_LIMIT = 12000
 
 _RESUME_GUIDANCE = (
     "Read `resume_documents[].text`, the parsed resume, before you score anything. The "
@@ -419,8 +419,6 @@ def _resume_text(path: str) -> str:
         log.warning("Could not read resume %r: %s", path, exc)
         text = ""
     text = (text or "").strip()
-    if len(text) > _RESUME_TEXT_LIMIT:
-        text = text[:_RESUME_TEXT_LIMIT].rstrip() + "\n[...truncated...]"
     _RESUME_TEXT_CACHE[path] = (stamp, text)
     return text
 
@@ -1646,6 +1644,13 @@ def get_jobs(
     ``get_jobs`` with ``needs_description=True`` to list them on their own. That is the
     supported way to judge a role the sweep could not read.
 
+    ``description`` carries the whole posting body, not an excerpt: nothing truncates it
+    unless a profile sets ``export.description_chars`` to a positive number, and a cut
+    body ends with an explicit truncation notice. Treat the text as complete. Never infer
+    that a requirement, a salary band, or a benefit is absent from the posting because
+    you did not see it — read the full text, and fetch the posting URL when a card has no
+    body at all.
+
     Each card also carries ``portfolio_url``, ``portfolio_path``, ``portfolio_pieces``,
     and ``portfolio_highlight``. ``portfolio_pieces`` comes from the portfolio for the
     card's resume track. Choose the pieces that fit the posting and pass them to
@@ -1761,9 +1766,10 @@ def submit_judgments(
     Every assessed card carries both sides of the case. ``alignment`` holds the
     highlight: the strongest evidence that the candidate fits, plus the move that uses
     it. ``concerns`` holds what works against the candidate: unmet requirements,
-    seniority or tenure gaps, domain mismatches, on-site expectations, or pay below the
-    floor. Name the specific obstacle and cite the posting text. Write "None identified"
-    only when the posting states no real obstacle.
+    seniority or tenure gaps, domain mismatches, on-site expectations, part-time hours,
+    a contract term, or pay below the floor. Name the specific obstacle and cite the
+    posting text. Write "None identified" only when the posting states no real obstacle.
+    Employment logistics go in ``concerns`` and never lower ``match_pct``.
 
     Pass ``judgments`` to assess many roles in one call. Each entry needs a ``job_id``
     plus any of the single-card fields, which keeps a 24-role assessment to one request.
@@ -1771,8 +1777,9 @@ def submit_judgments(
     Args:
         job_id: Stable job id (from run_sweep or get_jobs).
         match_pct: Optional LLM match percentage (0-100), scored against the parsed
-            resume text and the ATS read described above. Leave unset when the evidence
-            supports only keyword overlap.
+            resume text and the ATS read described above. Score qualifications and
+            skills only: part-time hours, contract status, and location belong in
+            ``concerns``. Leave unset when the evidence supports only keyword overlap.
         resume_track, resume_color, domain, summary, requirements, alignment,
         concerns, has_extended_response, app_format, comp, benefits, page_theme:
             Optional overrides.

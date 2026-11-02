@@ -15,6 +15,7 @@ from engine.cache import ResultCache, cache_key
 from engine.circuit_breaker import CircuitBreaker
 from engine.engine_defaults import DEFAULT_JOBSPY_SITES
 from engine.normalize import normalize_all
+from engine.resolve import is_search_url, resolve_posting_url
 from engine.salary import annual_max_amount, extract_pay
 from engine.sources import (
     fetch_ashby_org,
@@ -29,7 +30,6 @@ from engine.sources import (
     load_workable_slugs,
 )
 from engine.sources._common import title_matches
-from engine.resolve import is_search_url, resolve_posting_url
 from engine.sweep_config import normalize_sources
 
 log = logging.getLogger("sweepy.engine.discovery")
@@ -636,16 +636,64 @@ def _discover_sources_core(
                 time.sleep(_REQUEST_DELAY)
 
     if greenhouse_cfg.get("enabled", True) and platforms.get("greenhouse", True):
-        greenhouse_boards = list(greenhouse_cfg.get("boards") or []) or load_greenhouse_boards()
-        for board in greenhouse_boards:
-            try:
-                jobs = fetch_greenhouse_board(board, titles=titles)
-            except Exception as e:
-                log.warning("Greenhouse source %r failed: %s", board, e)
-                continue
-            _add_source_jobs(jobs, all_jobs, counts, titles, remote_only, include_hybrid, min_salary)
-            if _REQUEST_DELAY:
-                time.sleep(_REQUEST_DELAY)
+        broad_mode = greenhouse_cfg.get("discovery") == "broad" or greenhouse_cfg.get(
+            "broad", False
+        )
+        greenhouse_boards = list(greenhouse_cfg.get("boards") or [])
+        if broad_mode:
+            broad_slugs = load_greenhouse_boards(broad=True)
+            seen_boards = set(greenhouse_boards)
+            for s in broad_slugs:
+                if s not in seen_boards:
+                    greenhouse_boards.append(s)
+                    seen_boards.add(s)
+        elif not greenhouse_boards:
+            greenhouse_boards = load_greenhouse_boards()
+
+        concurrency = int(greenhouse_cfg.get("concurrency") or (20 if broad_mode else 1))
+        if concurrency > 1 and len(greenhouse_boards) > 1:
+            failed: List[str] = []
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures = {
+                    executor.submit(fetch_greenhouse_board, board, titles=titles): board
+                    for board in greenhouse_boards
+                }
+                for future in futures:
+                    board = futures[future]
+                    try:
+                        jobs = future.result()
+                    except Exception as e:
+                        # Broad mode probes hundreds of slugs, most of which 404. Keep the
+                        # per-board reason at debug and surface the count once below, so a
+                        # real failure still reaches the user without flooding the log.
+                        log.debug("Greenhouse board %r failed/not found: %s", board, e)
+                        failed.append(board)
+                        continue
+                    _add_source_jobs(
+                        jobs, all_jobs, counts, titles, remote_only, include_hybrid,
+                        min_salary,
+                    )
+            if failed:
+                shown = ", ".join(failed[:10]) + (", ..." if len(failed) > 10 else "")
+                log.warning(
+                    "Greenhouse: %d of %d boards failed (%s)",
+                    len(failed),
+                    len(greenhouse_boards),
+                    shown,
+                )
+        else:
+            for board in greenhouse_boards:
+                try:
+                    jobs = fetch_greenhouse_board(board, titles=titles)
+                except Exception as e:
+                    log.warning("Greenhouse source %r failed: %s", board, e)
+                    continue
+                _add_source_jobs(
+                    jobs, all_jobs, counts, titles, remote_only, include_hybrid,
+                    min_salary,
+                )
+                if _REQUEST_DELAY:
+                    time.sleep(_REQUEST_DELAY)
 
     if lever_cfg.get("enabled", True) and platforms.get("lever", True):
         lever_companies = list(lever_cfg.get("companies") or []) or load_lever_companies()

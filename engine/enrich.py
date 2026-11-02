@@ -12,7 +12,10 @@ from engine.session import stable_id
 log = logging.getLogger("sweepy.engine.enrich")
 
 _DEFAULT_COLOR = "#1D4ED8"
-DEFAULT_DESCRIPTION_CHARS = 1000
+# Zero keeps the whole posting. The consumer of these cards is an LLM, and a cut
+# posting is indistinguishable from a short one, which invites judgments on
+# requirements the card never showed.
+DEFAULT_DESCRIPTION_CHARS = 0
 NO_CONCERNS = "No missing keywords found in the posting."
 
 _REQUIREMENT_MARKERS = (
@@ -182,7 +185,7 @@ def _strip_md(text: str) -> str:
 
 
 def _description_limit(profile: dict) -> int:
-    """Read ``export.description_chars``; zero or less keeps the whole posting."""
+    """Read ``export.description_chars``; the default and anything <= 0 keep the whole posting."""
     raw = (profile.get("export", {}) or {}).get(
         "description_chars", DEFAULT_DESCRIPTION_CHARS
     )
@@ -194,9 +197,21 @@ def _description_limit(profile: dict) -> int:
 
 
 def _excerpt(text: str, limit: int) -> str:
-    if limit <= 0:
-        return _WS_RE.sub(" ", text).strip()
-    return _trim(text, limit)
+    """Return the posting body, honoring an explicit character limit.
+
+    A caller that sets ``export.description_chars`` to a positive number is asking to
+    save space. When that limit bites, the cut is labelled so nothing downstream can
+    read an excerpt as the complete posting.
+    """
+    body = _WS_RE.sub(" ", text).strip()
+    if limit <= 0 or len(body) <= limit:
+        return body
+    omitted = len(body) - limit
+    return (
+        f"{_trim(body, limit)}\n\n[Posting truncated at {limit} characters; "
+        f"{omitted} characters omitted. Set export.description_chars to 0 for the "
+        "full text, or read the posting URL.]"
+    )
 
 
 def _sentences(text: str) -> List[str]:

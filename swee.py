@@ -12,6 +12,10 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 from typing import Callable, Optional
 
+# OpenBLAS reads this once at load time, so it must be set before the engine
+# imports below pull in numpy through pandas.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 from engine import timefmt
 from engine.config import (
     DOCS_URL,
