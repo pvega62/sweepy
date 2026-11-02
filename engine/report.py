@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import ntpath
 import os
 import re
 from io import BytesIO
@@ -145,7 +146,12 @@ def _meta_html(profile: dict, cards: List[dict]) -> str:
 
 def _portfolio_target(source: dict) -> str:
     """Name the portfolio a track submits: its link, or the file name when it is local."""
-    return source.get("url") or os.path.basename(source.get("path") or "")
+    return source.get("url") or _portable_path_name(source.get("path") or "")
+
+
+def _portable_path_name(path: str) -> str:
+    """Return the final name from POSIX or Windows-style paths on any host."""
+    return ntpath.basename(path.replace("/", "\\"))
 
 
 def _portfolio_routing(profile: dict) -> str:
@@ -172,7 +178,7 @@ def _portfolio_line(job: dict) -> str:
     if url:
         target = f'<a href="{url}"><b>[{_esc(_link_label(job.get("portfolio_url")))}]</b></a>'
     elif path:
-        target = f"<b>{_esc(os.path.basename(path))}</b>"
+        target = f"<b>{_esc(_portable_path_name(path))}</b>"
     else:
         target = ""
     body = f"<b>Portfolio:</b> {target}".strip()
