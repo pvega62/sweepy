@@ -23,7 +23,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the current version and release history.
 
 ## Quick start
 
-You need **Python 3.10 or newer**. On Python 3.13, some packages build from source. You may need the Microsoft C++ Build Tools first. See [Installation](https://pvega62.github.io/software/docs/sweepy/installation).
+You need **Python 3.10 or newer**. On Python 3.13, some packages build from source. You may need the Microsoft C++ Build Tools first. See [Installing Sweepy](https://pvega62.github.io/software/docs/sweepy/installation).
 
 ```bash
 git clone https://github.com/pvega62/sweepy.git
@@ -165,10 +165,10 @@ Measured on Windows with Python 3.13:
 
 | Install | Packages on disk | Notes |
 |---|---|---|
-| Core (`requirements.txt`) | 290 MB | 53 packages, including pandas, pymupdf, and the MCP SDK |
-| `hirehunt` | +12 MB | Adds rich and markdown-it-py |
+| Core (`requirements.txt`) | 283 MB | 53 packages, including pandas, pymupdf, and the MCP SDK |
+| `hirehunt` | +13 MB | Adds rich and markdown-it-py |
 | `openroles` | +0.3 MB | Python standard library only |
-| `apify-client` | +17 MB | Adds impit, pydantic extras, and dnspython |
+| `apify-client` | +14 MB | Adds impit and more-itertools |
 | `jobdrop` | +406 MB | Led by scipy (134 MB), playwright (113 MB), tls-client (93 MB), and selenium (34 MB) |
 
 A full install of the compatible engines takes about **320 MB**. Adding `jobdrop` brings the total to about **725 MB** before it downloads a browser.

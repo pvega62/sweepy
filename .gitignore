@@ -24,13 +24,11 @@ results/
 # Debug logs
 logs/
 
-# User-specific profiles (keep template_custom.yaml)
-profiles/pedro_vega_writer.yaml
+# User-specific profiles (only the template and the documented example are tracked)
+profiles/*.yaml
+!profiles/template_custom.yaml
+!profiles/paralegal_nyc.yaml
 profiles/.last_profile
-profiles/k_jenkins_teacher.yaml
-profiles/tech_writer.yaml
-profiles/pedro_vega_portfolio_resume.yaml
-profiles/pedro_vega_technical_writer.yaml
 
 
 # Vale
