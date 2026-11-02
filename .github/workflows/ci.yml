@@ -50,7 +50,7 @@ jobs:
             echo "No test result file found." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          python3 <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          python3 <<'PY'
           from pathlib import Path
           from xml.etree import ElementTree as ET
 
@@ -69,6 +69,9 @@ jobs:
           for case, node in failures[:20]:
               print(f"- {case.get('classname', '')}::{case.get('name', '')}")
               details = (node.text or node.get("message") or "").strip()
+              title = f"{case.get('classname', '')}::{case.get('name', '')}"
+              annotation = details.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title={title}::{annotation[:2000]}")
               if details:
                   print()
                   print("```text")
