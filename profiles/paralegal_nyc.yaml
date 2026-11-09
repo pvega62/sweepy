@@ -10,7 +10,7 @@ search:
   include_hybrid: true
   min_salary: 65000
 resume:
-  path: C:/Users/vegap/OneDrive/Documents/GitHub/docusaurus/docs/sweepy/Alex_Rivera_Resume.pdf
+  path: C:/Users/vegap/OneDrive/Documents/GitHub/sweepy/docs/Alex_Rivera_Resume.pdf
   must_have_skills:
   - Westlaw
   - LexisNexis

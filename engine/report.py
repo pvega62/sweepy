@@ -337,6 +337,11 @@ def _render_card(job: dict, styles: dict) -> Table:
     return card_table
 
 
+def _counted(count: int, word: str) -> str:
+    """Render a count with a singular or plural noun."""
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+
 def _default_playbook(cards: List[dict], profile: dict) -> str:
     amber = [c for c in cards if c.get("has_extended_response")]
     slate = [c for c in cards if not c.get("has_extended_response")]
@@ -351,7 +356,7 @@ def _default_playbook(cards: List[dict], profile: dict) -> str:
         )
         parts.append(
             f"<b>- EXTENDED RESPONSE APPLICATIONS (Draft Prompts First // "
-            f"{len(amber)} Roles Highlighted in Amber):</b><br/>"
+            f"{_counted(len(amber), 'Role')} Highlighted in Amber):</b><br/>"
         )
         parts.append(f"&nbsp;&nbsp;- {names}.<br/>")
 
@@ -360,7 +365,7 @@ def _default_playbook(cards: List[dict], profile: dict) -> str:
             f"<b>{_esc(c.get('company',''))} (#{c.get('rank', 0)})</b>" for c in slate
         )
         parts.append(
-            f"<b>- STANDARD / QUICK SUBMISSION APPLICATIONS ({len(slate)} Roles in Slate):</b><br/>"
+            f"<b>- STANDARD / QUICK SUBMISSION APPLICATIONS ({_counted(len(slate), 'Role')} in Slate):</b><br/>"
         )
         parts.append(f"&nbsp;&nbsp;- {names}.<br/>")
 
@@ -370,7 +375,8 @@ def _default_playbook(cards: List[dict], profile: dict) -> str:
             key = str(c.get("resume_track", "") or "")
             counts[key] = counts.get(key, 0) + 1
         routing = "; ".join(
-            f"<code>{_esc(t.get('name',''))}</code> for {counts.get(str(t.get('name','')), 0)} roles"
+            f"<code>{_esc(t.get('name',''))}</code> for "
+            f"{_counted(counts.get(str(t.get('name','')), 0), 'role')}"
             for t in tracks
         )
         parts.append(f"<b>- RESUME TARGETING:</b> Submit {routing}.")
