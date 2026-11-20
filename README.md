@@ -1,10 +1,36 @@
-# Sweepy
+                                  ████  █   █  ████  ████  ████  █   █
+                                  █     █   █  █     █     █  █  █   █
+                                  ████  █ █ █  ███   ███   ████   █ █ 
+                                    █  ██ ██  █     █     █       █  
+                                  ████  █   █  ████  ████  █       █  
+<h1 align="center">Sweepy: Multi-Engine Job Search and Scoring</h1>
 
-[![M8ven Score](https://m8ven.ai/badge/mcp/pvega62-sweepy-07ewva?v=a2ea0bac35a4ed6e7512771f55ab2271)](https://m8ven.ai/mcp/pvega62-sweepy-07ewva?s=readme)
+<p align="center">
+  <strong>Search smarter, better, faster, stronger.</strong><br>
+  Parallel job scraping across top platforms, automated resume scoring, and ranked reporting.
+</p>
+
+<p align="center">
+  <a href="https://github.com/pvega62/sweepy/actions"><img src="https://github.com/pvega62/sweepy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="#quick-start"><img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10 or newer"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License"></a>
+  <a href="https://m8ven.ai/mcp/pvega62-sweepy-07ewva?s=readme"><img src="https://m8ven.ai/badge/mcp/pvega62-sweepy-07ewva?v=a2ea0bac35a4ed6e7512771f55ab2271" alt="M8ven Score"></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start"><strong>Quick start</strong></a> ·
+  <a href="#features">Features</a> ·
+  <a href="#job-engines">Job engines</a> ·
+  <a href="#portfolio-support">Portfolio support</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="https://github.com/pvega62/sweepy/issues/new">Report an issue</a>
+</p>
+
+---
 
 Sweepy is a free tool that searches job boards and scores each posting against your resume. It reads company career sites and job boards, drops duplicate and expired listings, then writes a ranked report. You can turn off duplicate checking for one sweep without changing your profile. The setup wizard opens a launchpad for searches, profile setup, search tuning, and Sweepy's Toolbox tasks such as engine and aggregator management.
 
-See [CHANGELOG.md](CHANGELOG.md) for the current version and release history.
+> See **[CHANGELOG.md](CHANGELOG.md)** for the current version and release history.
 
 ## Features
 
