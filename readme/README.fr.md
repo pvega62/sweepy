@@ -317,6 +317,24 @@ history:
 
 L'orchestrateur gère le reste. Il distribue par nom et applique le délai d'expiration. Il normalise chaque trame qui revient.
 
+## <a name="connect-to-antigravity"></a>Connecter Antigravity
+
+Sweepy fonctionne dans l’application de bureau Antigravity grâce à deux éléments. Le serveur MCP fournit les outils de recherche, et la compétence `/sweepy` ajoute le raccourci de conversation.
+
+**Demandez à l’agent.** Ouvrez Antigravity, lancez une conversation et envoyez ce message :
+
+> Configurez Sweepy pour moi. Enregistrez son serveur MCP local qui tourne sous `python <PATH_TO_SWEEPY>/server.py`, et installez la compétence depuis `<PATH_TO_SWEEPY>/skills/sweepy`.
+
+Antigravity écrit la configuration et ajoute les fichiers de la compétence sur votre machine.
+
+**Configurez-le à la main.** Suivez ces étapes dans l’ordre.
+
+1. **Ajoutez le serveur MCP.** Ouvrez **Paramètres** (icône d’engrenage) > **MCP Servers** et ajoutez un serveur nommé `sweepy`. Mettez `python` comme commande et `["<PATH_TO_SWEEPY>/server.py"]` comme arguments.
+2. **Installez la compétence.** Ouvrez votre dossier de compétences : `%USERPROFILE%\.gemini\config\skills` sous Windows, ou `~/.gemini/config/skills` sous macOS. Copiez le dossier `sweepy` depuis `skills/sweepy` dans ce répertoire, puis redémarrez Antigravity.
+3. **Lancez une recherche.** Tapez `/sweepy` dans la conversation. Pour la demander en clair, envoyez cette requête : *« Créez un profil à partir de mon CV dans `C:/path/to/resume.pdf` pour des postes de rédacteur technique en télétravail, et lancez ma première recherche. »*
+
+Antigravity appelle les mêmes outils MCP que n’importe quel autre hôte. La page [Intégration MCP](https://pvega62.github.io/software/docs/sweepy/reference/mcp-integration) couvre Claude Desktop, VS Code et la liste complète des outils.
+
 ## <a name="agent-judgment"></a>Jugement de l'agent
 
 Sweepy évalue les annonces par vocabulaire partagé, et ce scoring n'appelle pas de modèle et n'utilise pas le réseau. Les mêmes entrées produisent le même score, qui mesure la formulation, pas l'adéquation. Le serveur MCP considère une évaluation par agent comme le chemin attendu.

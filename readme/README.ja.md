@@ -317,6 +317,24 @@ history:
 
 残りはオーケストレーターが処理します。名前でディスパッチし、タイムアウトを適用します。返ってきたフレームは正規化されます。
 
+## <a name="connect-to-antigravity"></a>Antigravity に接続する
+
+Sweepy は 2 つの部品を通じて Antigravity デスクトップアプリ内で動作します。MCP サーバーが検索ツールを提供し、`/sweepy` スキルがチャットのショートカットを追加します。
+
+**エージェントに依頼します。** Antigravity を開いてチャットを開始し、次のプロンプトを送信します。
+
+> Sweepy をセットアップしてください。`python <PATH_TO_SWEEPY>/server.py` で動くローカル MCP サーバーを登録し、`<PATH_TO_SWEEPY>/skills/sweepy` からスキルをインストールしてください。
+
+Antigravity が設定を書き込み、スキルファイルをシステムに追加します。
+
+**手動で設定します。** 次の手順を順番に実行してください。
+
+1. **MCP サーバーを追加します。** **設定**（歯車アイコン）> **MCP Servers** を開き、`sweepy` という名前のサーバーを追加します。コマンドに `python`、引数に `["<PATH_TO_SWEEPY>/server.py"]` を設定します。
+2. **スキルをインストールします。** スキルフォルダーを開きます。Windows では `%USERPROFILE%\.gemini\config\skills`、macOS では `~/.gemini/config/skills` です。`sweepy` フォルダーを `skills/sweepy` からそのディレクトリにコピーし、Antigravity を再起動します。
+3. **検索を実行します。** チャットで `/sweepy` と入力します。言葉で依頼する場合は、次のリクエストを送信します：*「`C:/path/to/resume.pdf` の履歴書からリモートのテクニカルライター職を探すプロフィールを作成し、最初の検索を実行してください。」*
+
+Antigravity は他のホストと同じ MCP ツールを呼び出します。[MCP 連携](https://pvega62.github.io/software/docs/sweepy/reference/mcp-integration)ページでは、Claude Desktop、VS Code、ツールの完全な一覧を説明しています。
+
 ## <a name="agent-judgment"></a>エージェントの判断
 
 Sweepy は共通の語彙で求人をスコアリングし、そのスコアリングはモデルを呼び出さず、ネットワークも使いません。同じ入力からは同じスコアが出て、そのスコアは適性ではなく言葉遣いを測ります。MCP サーバーは、エージェントによる評価を想定された経路として扱います。

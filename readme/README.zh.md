@@ -317,6 +317,24 @@ history:
 
 其余工作由编排器负责。它按名称分发，并强制执行超时。返回的任何数据帧都会被规范化。
 
+## <a name="connect-to-antigravity"></a>连接 Antigravity
+
+Sweepy 通过两部分在 Antigravity 桌面应用里运行。MCP 服务器提供搜索工具，`/sweepy` 技能添加聊天快捷方式。
+
+**让 agent 来做。** 打开 Antigravity，开始一次聊天，然后发送这条消息：
+
+> 帮我配置 Sweepy。注册用 `python <PATH_TO_SWEEPY>/server.py` 运行的本地 MCP 服务器，并从 `<PATH_TO_SWEEPY>/skills/sweepy` 安装技能。
+
+Antigravity 会写入配置，并把技能文件添加到你的系统中。
+
+**手动配置。** 按顺序完成以下步骤。
+
+1. **添加 MCP 服务器。** 打开 **设置**（齿轮图标）> **MCP Servers**，添加名为 `sweepy` 的服务器。命令填 `python`，参数填 `["<PATH_TO_SWEEPY>/server.py"]`。
+2. **安装技能。** 打开你的技能文件夹：Windows 上是 `%USERPROFILE%\.gemini\config\skills`，macOS 上是 `~/.gemini/config/skills`。把 `sweepy` 文件夹从 `skills/sweepy` 复制到该目录，然后重启 Antigravity。
+3. **运行搜索。** 在聊天里输入 `/sweepy`。想用日常说法提出需求时，发送这条请求：*"用我 `C:/path/to/resume.pdf` 的简历创建一个搜索远程技术写作职位的配置，并运行第一次搜索。"*
+
+Antigravity 调用与其他宿主相同的 MCP 工具。[MCP 集成](https://pvega62.github.io/software/docs/sweepy/reference/mcp-integration)页面介绍 Claude Desktop、VS Code 和完整的工具列表。
+
 ## <a name="agent-judgment"></a>Agent 判断
 
 Sweepy 按共同词汇给职位评分，这种评分不调用模型，也不使用网络。相同的输入产生相同的分数，它衡量的是措辞，而不是契合度。MCP 服务器把 agent 评估视为预期路径。

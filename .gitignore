@@ -36,3 +36,7 @@ styles/
 
 # Review Notes
 release_notes.md
+
+# Translation guardrail: local source hashes, keyed by absolute path
+translation-state.json
+translation-baseline.json

@@ -317,6 +317,24 @@ history:
 
 The orchestrator handles the rest. It dispatches by name and enforces the timeout. Any frame that comes back gets normalized.
 
+## Connect to Antigravity
+
+Sweepy runs inside the Antigravity desktop app through two pieces. The MCP server supplies the search tools, and the `/sweepy` skill adds the chat shortcut.
+
+**Ask the agent.** Open Antigravity, start a chat, and send this prompt:
+
+> Set up Sweepy for me. Register its local MCP server running `python <PATH_TO_SWEEPY>/server.py`, and install the skill from `<PATH_TO_SWEEPY>/skills/sweepy`.
+
+Antigravity writes the config and adds the skill files to your machine.
+
+**Set it up by hand.** Follow these steps in order.
+
+1. **Add the MCP server.** Open **Settings** (gear icon) > **MCP Servers** and add a server named `sweepy`. Set the command to `python` and the arguments to `["<PATH_TO_SWEEPY>/server.py"]`.
+2. **Install the skill.** Open your skills folder: `%USERPROFILE%\.gemini\config\skills` on Windows, or `~/.gemini/config/skills` on macOS. Copy the `sweepy` folder from `skills/sweepy` into that directory, then restart Antigravity.
+3. **Run a search.** Type `/sweepy` in the chat. To ask in plain words, send this request: *"Create a profile from my resume at `C:/path/to/resume.pdf` for remote technical writer roles, and run my first sweep."*
+
+Antigravity calls the same MCP tools as any other host. The [MCP integration](https://pvega62.github.io/software/docs/sweepy/reference/mcp-integration) page covers Claude Desktop, VS Code, and the full tool list.
+
 ## Agent judgment
 
 Sweepy scores postings by shared vocabulary, and that scoring doesn't call a model or use the network. The same inputs produce the same score, which measures wording, not fit. The MCP server treats an agent assessment as the expected path.

@@ -317,6 +317,24 @@ history:
 
 El orquestador se encarga del resto. Distribuye por nombre y aplica el tiempo de espera. Cualquier DataFrame que devuelva se normaliza.
 
+## <a name="connect-to-antigravity"></a>Conectar Antigravity
+
+Sweepy funciona dentro de la app de escritorio Antigravity con dos componentes. El servidor MCP aporta las herramientas de búsqueda, y la habilidad `/sweepy` añade el atajo del chat.
+
+**Pídeselo al agente.** Abre Antigravity, inicia un chat y envía este mensaje:
+
+> Configura Sweepy por mí. Registra su servidor MCP local con `python <PATH_TO_SWEEPY>/server.py`, e instala la habilidad desde `<PATH_TO_SWEEPY>/skills/sweepy`.
+
+Antigravity escribe la configuración y añade los archivos de la habilidad a tu equipo.
+
+**Configúralo a mano.** Sigue estos pasos en orden.
+
+1. **Añade el servidor MCP.** Abre **Configuración** (icono de engranaje) > **MCP Servers** y añade un servidor llamado `sweepy`. Pon `python` como comando y `["<PATH_TO_SWEEPY>/server.py"]` como argumentos.
+2. **Instala la habilidad.** Abre tu carpeta de habilidades: `%USERPROFILE%\.gemini\config\skills` en Windows o `~/.gemini/config/skills` en macOS. Copia la carpeta `sweepy` de `skills/sweepy` a esa carpeta y reinicia Antigravity.
+3. **Lanza una búsqueda.** Escribe `/sweepy` en el chat. Para pedirlo con palabras normales, envía esta solicitud: *"Crea un perfil con mi currículum en `C:/path/to/resume.pdf` para puestos de redactor técnico en remoto y lanza mi primera búsqueda."*
+
+Antigravity llama a las mismas herramientas MCP que cualquier otro host. La página de [integración MCP](https://pvega62.github.io/software/docs/sweepy/reference/mcp-integration) cubre Claude Desktop, VS Code y la lista completa de herramientas.
+
 ## <a name="agent-judgment"></a>Juicio del agente
 
 Sweepy puntúa las ofertas por vocabulario compartido, y esa puntuación no llama a un modelo ni usa la red. Las mismas entradas producen la misma puntuación, que mide la redacción, no la idoneidad. El servidor MCP trata la evaluación de un agente como la ruta esperada.

@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "_comment": "Sweepy has no locale tree: translations sit beside the English README. Locale rules come from the guardrail skill. Two measured overrides: a README speaks in 你 while the docs site uses 您, and the board-name tables (LinkedIn, Greenhouse, Workday) hold the Han and Devanagari share below the docs floor.",
+  "extends": "skill",
+  "source_locale": "en",
+  "content_extensions": [".md"],
+  "glossary": "glossary.json",
+  "context": "context.json",
+  "baseline": "translation-baseline.json",
+  "standalone": {
+    "pairs": [
+      {
+        "source": "README.md",
+        "target": "readme/README.{locale}.md",
+        "locales": ["ar", "es", "fr", "hi", "ja", "zh"]
+      }
+    ]
+  },
+  "locales": {
+    "zh": {
+      "register": {
+        "name": "informal 你",
+        "forbidden_patterns": [],
+        "forbidden_words": []
+      },
+      "script": {
+        "min_ratio": 0.65
+      }
+    },
+    "hi": {
+      "script": {
+        "min_ratio": 0.7
+      }
+    }
+  }
+}
