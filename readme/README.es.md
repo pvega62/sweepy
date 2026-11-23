@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/pvega62/sweepy/actions"><img src="https://github.com/pvega62/sweepy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10 o superior"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="Licencia MIT"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="Licencia MIT"></a>
   <a href="https://m8ven.ai/mcp/pvega62-sweepy-07ewva?s=readme"><img src="https://m8ven.ai/badge/mcp/pvega62-sweepy-07ewva?v=a2ea0bac35a4ed6e7512771f55ab2271" alt="Puntuación de M8ven"></a>
 </p>
 
@@ -26,15 +26,19 @@
   <a href="https://github.com/pvega62/sweepy/issues/new">Informar de un problema</a>
 </p>
 
+<p align="center">
+  <a href="../README.md">English</a> · <strong>Español</strong> · <a href="README.fr.md">Français</a> · <a href="README.hi.md">हिन्दी</a> · <a href="README.ja.md">日本語</a> · <a href="README.ar.md">العربية</a> · <a href="README.zh.md">简体中文</a>
+</p>
+
 ---
 
 Sweepy es una herramienta gratuita que busca en portales de empleo y puntúa cada oferta frente a tu currículum. Lee sitios de empleo de empresas y portales de ofertas, descarta los anuncios duplicados y los caducados y, después, escribe un reporte ordenado por relevancia. Puedes desactivar la comprobación de duplicados en una búsqueda sin cambiar tu perfil. El asistente de configuración abre un panel de inicio para búsquedas, configuración del perfil, ajuste de las búsquedas y tareas de la Caja de herramientas de Sweepy, como la gestión de motores y agregadores.
 
-> Consulta **[CHANGELOG.md](CHANGELOG.md)** para ver la versión actual y el historial de versiones.
+> Consulta **[CHANGELOG.md](../CHANGELOG.md)** para ver la versión actual y el historial de versiones.
 
 ## <a name="features"></a>Funcionalidades
 
-- **Busca en muchos sitios a la vez.** Recopila ofertas de Greenhouse, Ashby, Lever, Workable, Built In New York City, LinkedIn, Indeed, Glassdoor y ZipRecruiter. Cada una de estas fuentes funciona sin clave de API.
+- **Busca en muchos sitios a la vez.** Recopila ofertas de Greenhouse, Ashby, Lever, Workable, Built In NYC, LinkedIn, Indeed, Glassdoor y ZipRecruiter. Cada una de estas fuentes funciona sin clave de API.
 - **Ejecuta cada motor en paralelo.** Los motores habilitados arrancan a la vez. Una búsqueda tarda entonces más o menos lo que el motor más lento, no la suma de todos.
 - **Sigue adelante cuando falla un portal.** Cada motor tiene un tiempo de espera y un cortacircuitos. Un endpoint que falla no puede atascar la ejecución ni repetir la misma petición cinco veces.
 - **Añade más motores cuando los necesites.** Instala HireHunt, openroles, jobdrop o Apify desde el asistente sin salir de la terminal.
@@ -60,7 +64,7 @@ sweepy
 
 `pip install -e .` instala todas las dependencias del núcleo y registra el comando `sweepy` en tu carpeta Scripts de Python. Vuelve a abrir la terminal una vez para que el shell recoja esa carpeta del PATH. Ejecuta `sweepy` para abrir el asistente o añade una opción al comando, como `sweepy --run`. También puedes ejecutar el script directamente con `python swee.py`.
 
-Ese único comando te da los dos motores integrados. El asistente ofrece los cuatro motores opcionales cuando los necesitas, y nunca ejecutas un archivo de requisitos aparte.
+Ese único comando te da los dos motores integrados. El asistente ofrece los cuatro motores opcionales cuando los necesitas, y nunca tienes que instalar a mano un segundo archivo de requisitos.
 
 Para descargar de una vez todos los motores compatibles, añade un indicador al mismo comando:
 
@@ -156,16 +160,16 @@ Cada ejecución escribe archivos con la fecha en la carpeta `results/`. Los repo
 - **Un archivo CSV.** Todos los campos de la tarjeta, el cuerpo completo de la oferta y ocho columnas de seguimiento de empleo que Sweepy copia en búsquedas posteriores. Ábrelo en Excel, Google Sheets o Notion. Ajusta `export.description_chars` a un número positivo cuando quieras archivos más pequeños. Un cuerpo recortado termina con una nota que cuenta los caracteres omitidos.
 - **Un archivo JSON.** Los mismos datos en un formato que otras herramientas pueden leer.
 
-Abre el [PDF de muestra](docs/sample_report.pdf) o mira la [página 1 como imagen](docs/sample_report.png).
+Abre el [PDF de muestra](../docs/sample_report.pdf) o mira la [página 1 como imagen](../docs/sample_report.png).
 
 ## <a name="job-engines"></a>Motores de empleo
 
-Sweepy incluye dos motores y puede descargar cuatro más. Cada motor funciona detrás del mismo adaptador. Los perfiles se ven igual, sea cual sea el motor que encontró la oferta.
+Sweepy incluye dos motores y puede descargar cuatro más. El motor `ats` lee directamente los sistemas de seguimiento de candidaturas (ATS). Cada motor funciona detrás del mismo adaptador. Los perfiles se ven igual, sea cual sea el motor que encontró la oferta.
 
 | Motor | Disponibilidad | Qué extrae | Proxies | User-Agent | Descripciones |
 |---|---|---|---|---|---|
 | `jobspy` | Integrado | LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, BDJobs | Sí | Sí | Alternable |
-| `ats` | Integrado | Greenhouse, Ashby, Lever, Workable, Built In NYC | No | No | Siempre |
+| `ats` | Integrado | Greenhouse, Ashby, Lever, Workable, BuiltinNYC | No | No | Siempre |
 | `hirehunt` | Descarga | LinkedIn, Indeed, Naukri, Shine, Internshala, Unstop y seis portales de empresa (Google Careers, Amazon, Meta, Apple, Netflix, Microsoft) | No | No | Siempre |
 | `openroles` | Descarga | Portales de Greenhouse, Lever, Ashby y Workday que nombres | No | No | Siempre |
 | `jobdrop` | Descarga | 33 portales, entre ellos Google, Wellfound, Workday, iCIMS, Dice y USAJobs | Sí | Sí | Alternable |
@@ -197,7 +201,7 @@ Medido en Windows con Python 3.13:
 | `apify-client` | +14 MB | Añade impit y more-itertools |
 | `jobdrop` | +406 MB | Con scipy a la cabeza (134 MB), playwright (113 MB), tls-client (93 MB) y selenium (34 MB) |
 
-Una instalación completa de los motores compatibles ocupa unos **320 MB**. Añadir `jobdrop` lleva el total a unos **725 MB** antes de que descargue un navegador.
+Una instalación completa de los motores compatibles ocupa unos **310 MB**. Añadir `jobdrop` lleva el total a unos **716 MB** antes de que descargue un navegador.
 
 Los binarios del navegador viven fuera del entorno de Python y llegan en el primer uso:
 
@@ -230,12 +234,12 @@ Cada vía valida los ajustes del motor antes de escribir el archivo. Un valor qu
 
 ### <a name="choosing-boards"></a>Elegir portales
 
-El paso de plataformas del asistente de perfil lista todos los portales en los que Sweepy puede buscar, agrupados bajo el motor que los lee. Los 63 portales aparecen en un solo sitio en lugar de solo los cinco integrados.
+El paso de plataformas del asistente de perfil lista todos los portales en los que Sweepy puede buscar, agrupados bajo el motor que los lee. Los 63 portales aparecen en un solo sitio en lugar de solo los 13 integrados.
 
 | Grupo | Portales | Etiqueta |
 |---|---|---|
 | `jobspy` (8) | LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, BDJobs | `built in` |
-| `ats` (5) | Greenhouse, Ashby, Lever, Workable, Built In NYC | `built in` |
+| `ats` (5) | Greenhouse, Ashby, Lever, Workable, BuiltinNYC | `built in` |
 | `hirehunt` (12) | LinkedIn, Indeed, Naukri, Shine, Internshala, Unstop, Google Careers, Amazon, Meta, Apple, Netflix, Microsoft | `needs download` hasta que se instala |
 | `openroles` (4) | Greenhouse, Lever, Ashby, Workday | `needs download`, y necesita slugs de empresa |
 | `jobdrop` (33) | Google, Wellfound, Workday, iCIMS, Dice, USAJobs, Handshake y más | `needs download`, y entra en conflicto con JobSpy |
@@ -323,7 +327,7 @@ Sweepy puntúa las ofertas por vocabulario compartido, y esa puntuación no llam
 
 `match_pct` mide la cualificación, así que la logística del empleo queda fuera. La jornada a tiempo parcial, el tipo de contrato y la ubicación van en `concerns`. Un puesto que la persona candidata puede desempeñar pierde puntos solo cuando las habilidades o la experiencia no coinciden con los requisitos que declara la oferta. Así la clasificación mide la idoneidad y no la disponibilidad.
 
-Evalúa los dos lados del caso. `alignment` recoge el punto fuerte, la prueba más sólida de que la persona candidata encaja. `concerns` recoge lo que juega en contra, como una cualificación que falta, un hueco de permanencia, una jornada a tiempo parcial, un contrato temporal, una ubicación que exige mudarse o un salario por debajo del mínimo. El reporte imprime la pareja en una línea bajo la fila de requisitos, y el CSV gana una columna `concerns`. Una ejecución solo de palabras clave rellena `concerns` con las palabras clave de la oferta que el currículum no tiene.
+Evalúa los dos lados del caso. `alignment` recoge el punto fuerte, la prueba más sólida de que la persona candidata encaja. `concerns` recoge lo que juega en contra de la persona candidata. Algunos ejemplos son una cualificación que falta, un hueco de permanencia, una jornada a tiempo parcial, un contrato temporal, una ubicación que exige mudarse o un salario por debajo del mínimo. El reporte imprime la pareja en una línea bajo la fila de requisitos, y el CSV gana una columna `concerns`. Una ejecución solo de palabras clave rellena `concerns` con las palabras clave de la oferta que el currículum no tiene.
 
 `submit_judgments` también acepta `portfolio_highlight`. Pasa las piezas del portafolio para esa oferta y la tarjeta las imprime como **Highlight**. Una tarjeta sin un destacado enviado lista las piezas que encontró Sweepy.
 
@@ -352,10 +356,10 @@ En el modo `agent`, `render_report` se niega a crear un reporte mixto. Devuelve 
 
 Una búsqueda en vivo extrae portales durante un minuto o más. El servidor MCP la ejecuta en segundo plano. `run_sweep` espera como máximo 45 segundos y después devuelve `sweep_status: "running"` con un `job_id`. Consulta `get_sweep_status` hasta que informe de `completed`. La búsqueda sigue en marcha si el cliente se desconecta. Define `SWEEPY_MCP_WAIT_SECONDS` para reducir la espera en hosts con tiempos de espera de herramientas más ajustados.
 
-Los perfiles creados desde MCP usan los motores integrados más los motores opcionales instalados que superan
-sus comprobaciones de configuración predeterminadas. Proporciona `sources_config` para elegir motores
-de forma explícita. OpenRoles necesita un slug por empresa. Apify necesita una aceptación explícita
-porque puede generar cargos.
+- Los perfiles creados desde MCP usan los motores integrados más los motores opcionales instalados que superan sus comprobaciones de configuración predeterminadas.
+- Proporciona `sources_config` para elegir motores de forma explícita.
+- OpenRoles necesita un slug por empresa.
+- Apify necesita una aceptación explícita porque puede generar cargos.
 
 El asistente puede verificar los resultados y cubrir huecos con sus herramientas de búsqueda. Debe contrastar las fuentes omitidas y las ofertas con las páginas de empleo de la empresa. Debe añadir las omisiones verificadas y etiquetar como no verificados los anuncios inaccesibles. Debe avisar cuando no pueda confirmar una cobertura completa.
 
@@ -405,4 +409,4 @@ El scraping se ejecuta a través de [`python-jobspy`](https://github.com/Bunsly/
 
 ## <a name="license"></a>Licencia
 
-Sweepy se publica bajo la [Licencia MIT](LICENSE).
+Sweepy se publica bajo la [Licencia MIT](../LICENSE).

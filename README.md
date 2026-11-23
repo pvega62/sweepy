@@ -26,6 +26,10 @@
   <a href="https://github.com/pvega62/sweepy/issues/new">Report an issue</a>
 </p>
 
+<p align="center">
+  <strong>English</strong> · <a href="readme/README.es.md">Español</a> · <a href="readme/README.fr.md">Français</a> · <a href="readme/README.hi.md">हिन्दी</a> · <a href="readme/README.ja.md">日本語</a> · <a href="readme/README.ar.md">العربية</a> · <a href="readme/README.zh.md">简体中文</a>
+</p>
+
 ---
 
 Sweepy is a free tool that searches job boards and scores each posting against your resume. It reads company career sites and job boards, drops duplicate and expired listings, then writes a ranked report. You can turn off duplicate checking for one sweep without changing your profile. The setup wizard opens a launchpad for searches, profile setup, search tuning, and Sweepy's Toolbox tasks such as engine and aggregator management.
@@ -34,7 +38,7 @@ Sweepy is a free tool that searches job boards and scores each posting against y
 
 ## Features
 
-- **Searches many places at once.** Collects postings from Greenhouse, Ashby, Lever, Workable, Built In New York City, LinkedIn, Indeed, Glassdoor, and ZipRecruiter. Each of these sources works without an API key.
+- **Searches many places at once.** Collects postings from Greenhouse, Ashby, Lever, Workable, Built In NYC, LinkedIn, Indeed, Glassdoor, and ZipRecruiter. Each of these sources works without an API key.
 - **Runs every engine in parallel.** Enabled engines start together. A sweep then takes about as long as the slowest engine rather than the sum of them.
 - **Keeps going when a board fails.** Each engine gets a timeout and a circuit breaker. One failing endpoint can't stall the run or repeat the same request five times.
 - **Adds more engines on demand.** Install HireHunt, openroles, jobdrop, or Apify from the wizard without leaving the terminal.
@@ -60,7 +64,7 @@ sweepy
 
 `pip install -e .` installs every core dependency and registers the `sweepy` command in your Python Scripts folder. Reopen your terminal once so your shell picks up that folder from PATH. Run `sweepy` to start the wizard, or add a command option such as `sweepy --run`. You can also run the script directly with `python swee.py`.
 
-That one command gives you the two built-in engines. The wizard offers the four optional engines when you need them, and you never run a separate requirements file.
+That one command gives you the two built-in engines. The wizard offers the four optional engines when you need them, and you never install a second requirements file by hand.
 
 To pull every compatible engine up front instead, add one flag to the same command:
 
@@ -160,12 +164,12 @@ Open the [sample PDF](docs/sample_report.pdf), or view [page 1 as an image](docs
 
 ## Job engines
 
-Sweepy includes two engines and can download four more. Every engine runs behind the same adapter. Profiles look the same no matter which one found the posting.
+Sweepy includes two engines and can download four more. The `ats` engine reads applicant tracking systems (ATS) directly. Every engine runs behind the same adapter. Profiles look the same no matter which one found the posting.
 
 | Engine | Availability | What it scrapes | Proxies | User-Agent | Descriptions |
 |---|---|---|---|---|---|
 | `jobspy` | Built in | LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, BDJobs | Yes | Yes | Toggle |
-| `ats` | Built in | Greenhouse, Ashby, Lever, Workable, Built In NYC | No | No | Always |
+| `ats` | Built in | Greenhouse, Ashby, Lever, Workable, BuiltinNYC | No | No | Always |
 | `hirehunt` | Download | LinkedIn, Indeed, Naukri, Shine, Internshala, Unstop, and six company boards (Google Careers, Amazon, Meta, Apple, Netflix, Microsoft) | No | No | Always |
 | `openroles` | Download | Greenhouse, Lever, Ashby, Workday boards you name | No | No | Always |
 | `jobdrop` | Download | 33 boards including Google, Wellfound, Workday, iCIMS, Dice, USAJobs | Yes | Yes | Toggle |
@@ -197,7 +201,7 @@ Measured on Windows with Python 3.13:
 | `apify-client` | +14 MB | Adds impit and more-itertools |
 | `jobdrop` | +406 MB | Led by scipy (134 MB), playwright (113 MB), tls-client (93 MB), and selenium (34 MB) |
 
-A full install of the compatible engines takes about **320 MB**. Adding `jobdrop` brings the total to about **725 MB** before it downloads a browser.
+A full install of the compatible engines takes about **310 MB**. Adding `jobdrop` brings the total to about **716 MB** before it downloads a browser.
 
 Browser binaries live outside the Python environment and arrive on first use:
 
@@ -230,12 +234,12 @@ Each route validates the engine's settings before it writes the file. A missing 
 
 ### Choosing boards
 
-The profile wizard's platform step lists every board Sweepy can search, grouped under the engine that reads it. All 63 boards appear in one place instead of only the built-in five.
+The profile wizard's platform step lists every board Sweepy can search, grouped under the engine that reads it. All 63 boards appear in one place instead of only the 13 built-in boards.
 
 | Group | Boards | Tag |
 |---|---|---|
 | `jobspy` (8) | LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, BDJobs | `built in` |
-| `ats` (5) | Greenhouse, Ashby, Lever, Workable, Built In NYC | `built in` |
+| `ats` (5) | Greenhouse, Ashby, Lever, Workable, BuiltinNYC | `built in` |
 | `hirehunt` (12) | LinkedIn, Indeed, Naukri, Shine, Internshala, Unstop, Google Careers, Amazon, Meta, Apple, Netflix, Microsoft | `needs download` until installed |
 | `openroles` (4) | Greenhouse, Lever, Ashby, Workday | `needs download`, and needs company slugs |
 | `jobdrop` (33) | Google, Wellfound, Workday, iCIMS, Dice, USAJobs, Handshake, and more | `needs download`, and conflicts with JobSpy |
@@ -323,7 +327,7 @@ Sweepy scores postings by shared vocabulary, and that scoring doesn't call a mod
 
 `match_pct` measures qualifications, so employment logistics stay out of it. Part-time hours, contract status, and location belong in `concerns`. A role the candidate can do loses points only when the skills or experience don't match the posting's stated requirements. The ranking then measures fit rather than availability.
 
-Assess both sides of the case. `alignment` states the highlight, the strongest evidence that the candidate fits. `concerns` states what works against the candidate, such as a missing qualification, a tenure gap, part-time hours, a contract term, a location that needs a move, or pay below the floor. The report prints the pair on one line under the requirements row, and the CSV gains a `concerns` column. A keyword-only run fills `concerns` from the posting keywords the resume misses.
+Assess both sides of the case. `alignment` states the highlight, the strongest evidence that the candidate fits. `concerns` states what works against the candidate. Examples include a missing qualification, a tenure gap, part-time hours, a contract term, a required move, or pay below the floor. The report prints the pair on one line under the requirements row, and the CSV gains a `concerns` column. A keyword-only run fills `concerns` from the posting keywords the resume misses.
 
 `submit_judgments` also takes `portfolio_highlight`. Pass the portfolio pieces for that posting, and the card prints them as **Highlight**. A card with no submitted highlight lists the pieces Sweepy found.
 
@@ -352,10 +356,10 @@ In `agent` mode, `render_report` refuses to build a mixed report. It returns an 
 
 A live sweep scrapes boards for a minute or longer. The MCP server runs it in the background. `run_sweep` waits at most 45 seconds and then returns `sweep_status: "running"` with a `job_id`. Poll `get_sweep_status` until it reports `completed`. The sweep keeps running if the client disconnects. Set `SWEEPY_MCP_WAIT_SECONDS` to lower the wait for hosts with tighter tool timeouts.
 
-MCP-created profiles use the built-in engines plus installed optional engines that pass
-their default configuration checks. Provide `sources_config` to pick engines
-explicitly. OpenRoles needs a slug for each company. Apify needs explicit opt-in
-because it may incur charges.
+- MCP-created profiles use the built-in engines plus installed optional engines that pass their default configuration checks.
+- Provide `sources_config` to pick engines explicitly.
+- OpenRoles needs a slug for each company.
+- Apify needs explicit opt-in because it may incur charges.
 
 The assistant can verify results and fill gaps with its search tools. It should check skipped sources and postings against employer career pages. It should add verified omissions and label inaccessible listings as unverified. It must disclose when it can't confirm full coverage.
 

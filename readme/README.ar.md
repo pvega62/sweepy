@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/pvega62/sweepy/actions"><img src="https://github.com/pvega62/sweepy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10 أو أحدث"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="رخصة MIT"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="رخصة MIT"></a>
   <a href="https://m8ven.ai/mcp/pvega62-sweepy-07ewva?s=readme"><img src="https://m8ven.ai/badge/mcp/pvega62-sweepy-07ewva?v=a2ea0bac35a4ed6e7512771f55ab2271" alt="تقييم M8ven"></a>
 </p>
 
@@ -26,15 +26,19 @@
   <a href="https://github.com/pvega62/sweepy/issues/new">أبلغ عن مشكلة</a>
 </p>
 
+<p align="center">
+  <a href="../README.md">English</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.hi.md">हिन्दी</a> · <a href="README.ja.md">日本語</a> · <strong>العربية</strong> · <a href="README.zh.md">简体中文</a>
+</p>
+
 ---
 
 Sweepy أداة مجانية تبحث في لوحات الوظائف وتقيّم كل إعلان مقابل سيرتك الذاتية. تقرأ مواقع التوظيف لدى الشركات ولوحات الوظائف، وتحذف الإعلانات المكررة والمنتهية، ثم تكتب تقريرًا مرتبًا. يمكنك إيقاف فحص التكرار لجولة واحدة دون تغيير ملفك الشخصي. يفتح معالج الإعداد لوحة انطلاق للبحث وإعداد الملف الشخصي وضبط البحث ومهام صندوق أدوات Sweepy مثل إدارة المحركات والمجمّعات.
 
-> راجع **[CHANGELOG.md](CHANGELOG.md)** لمعرفة الإصدار الحالي وسجل الإصدارات.
+> راجع **[CHANGELOG.md](../CHANGELOG.md)** لمعرفة الإصدار الحالي وسجل الإصدارات.
 
 ## <a name="features"></a>الميزات
 
-- **يبحث في أماكن كثيرة في وقت واحد.** يجمع الإعلانات من Greenhouse وAshby وLever وWorkable وBuilt In New York City وLinkedIn وIndeed وGlassdoor وZipRecruiter. يعمل كل من هذه المصادر دون مفتاح API.
+- **يبحث في أماكن كثيرة في وقت واحد.** يجمع الإعلانات من Greenhouse وAshby وLever وWorkable وBuilt In NYC وLinkedIn وIndeed وGlassdoor وZipRecruiter. يعمل كل من هذه المصادر دون مفتاح API.
 - **يشغّل كل محرك بالتوازي.** تبدأ المحركات المفعّلة معًا. تستغرق الجولة بعد ذلك زمن أبطأ محرك تقريبًا بدلًا من مجموع أزمنتها.
 - **يواصل العمل عند فشل لوحة.** يحصل كل محرك على مهلة زمنية وقاطع دائرة. لا تستطيع نقطة نهاية واحدة فاشلة أن تعطّل الجولة أو أن تكرر الطلب نفسه خمس مرات.
 - **يضيف محركات أخرى عند الحاجة.** ثبّت HireHunt أو openroles أو jobdrop أو Apify من المعالج دون مغادرة الطرفية.
@@ -60,7 +64,7 @@ sweepy
 
 يثبّت `pip install -e .` كل تبعية أساسية ويسجل الأمر `sweepy` في مجلد Python Scripts. أعد فتح الطرفية مرة واحدة حتى يلتقط الصدف ذلك المجلد من PATH. شغّل `sweepy` لبدء المعالج، أو أضف خيار أمر مثل `sweepy --run`. ويمكنك أيضًا تشغيل السكربت مباشرة بـ `python swee.py`.
 
-يمنحك ذلك الأمر الواحد المحركين المدمجين. ويعرض المعالج المحركات الأربعة الاختيارية عند حاجتك إليها، ولا تشغّل ملف متطلبات منفصلًا أبدًا.
+يمنحك ذلك الأمر الواحد المحركين المدمجين. ويعرض المعالج المحركات الأربعة الاختيارية عند حاجتك إليها، ولا تحتاج إلى تثبيت ملف متطلبات آخر يدويًا.
 
 لجلب كل محرك متوافق مسبقًا بدلًا من ذلك، أضف علامة واحدة إلى الأمر نفسه:
 
@@ -156,16 +160,16 @@ sweepy --convert path/to/resume.docx
 - **ملف CSV.** كل حقل في البطاقة، ونص الإعلان كاملًا، وثمانية أعمدة لتتبع الوظائف ينسخها Sweepy إلى الجولات اللاحقة. افتحه في Excel أو Google Sheets أو Notion. واضبط `export.description_chars` على رقم موجب عندما تريد ملفات أصغر. وينتهي النص المقتطع بملاحظة تعدّ الأحرف المحذوفة.
 - **ملف JSON.** البيانات نفسها بصيغة تستطيع أدوات أخرى قراءتها.
 
-افتح [ملف PDF النموذجي](docs/sample_report.pdf)، أو اعرض [الصفحة 1 كصورة](docs/sample_report.png).
+افتح [ملف PDF النموذجي](../docs/sample_report.pdf)، أو اعرض [الصفحة 1 كصورة](../docs/sample_report.png).
 
 ## <a name="job-engines"></a>محركات الوظائف
 
-يتضمن Sweepy محركين ويمكنه تنزيل أربعة أخرى. ويعمل كل محرك خلف المحوّل نفسه. وتبدو الملفات الشخصية نفسها أيًّا كان المحرك الذي وجد الإعلان.
+يتضمن Sweepy محركين ويمكنه تنزيل أربعة أخرى. ويقرأ محرك `ats` أنظمة تتبع المتقدمين (ATS) مباشرةً. ويعمل كل محرك خلف المحوّل نفسه. وتبدو الملفات الشخصية نفسها أيًّا كان المحرك الذي وجد الإعلان.
 
 | المحرك | التوفر | ما يكشطه | الخوادم الوسيطة | User-Agent | الأوصاف |
 |---|---|---|---|---|---|
 | `jobspy` | مدمج | LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, BDJobs | نعم | نعم | تبديل |
-| `ats` | مدمج | Greenhouse, Ashby, Lever, Workable, Built In NYC | لا | لا | دائمًا |
+| `ats` | مدمج | Greenhouse, Ashby, Lever, Workable, BuiltinNYC | لا | لا | دائمًا |
 | `hirehunt` | تنزيل | LinkedIn, Indeed, Naukri, Shine, Internshala, Unstop، وست لوحات شركات (Google Careers, Amazon, Meta, Apple, Netflix, Microsoft) | لا | لا | دائمًا |
 | `openroles` | تنزيل | لوحات Greenhouse, Lever, Ashby, Workday التي تسميها | لا | لا | دائمًا |
 | `jobdrop` | تنزيل | 33 لوحة تشمل Google, Wellfound, Workday, iCIMS, Dice, USAJobs | نعم | نعم | تبديل |
@@ -197,7 +201,7 @@ sweepy --install-engines jobdrop --allow-engine-conflicts
 | `apify-client` | +14 MB | يضيف impit وmore-itertools |
 | `jobdrop` | +406 MB | يتصدرها scipy (134 MB)، وplaywright (113 MB)، وtls-client (93 MB)، وselenium (34 MB) |
 
-ويستهلك التثبيت الكامل للمحركات المتوافقة نحو **320 MB**. ويصل الإجمالي بإضافة `jobdrop` إلى نحو **725 MB** قبل تنزيل متصفح.
+ويستهلك التثبيت الكامل للمحركات المتوافقة نحو **310 MB**. ويصل الإجمالي بإضافة `jobdrop` إلى نحو **716 MB** قبل تنزيل متصفح.
 
 تعيش ملفات المتصفح التنفيذية خارج بيئة Python وتصل عند أول استخدام:
 
@@ -230,12 +234,12 @@ sweepy --setup --non-interactive --profile profiles/your_profile.yaml \
 
 ### <a name="choosing-boards"></a>اختيار اللوحات
 
-تسرد خطوة المنصات في معالج الملف الشخصي كل لوحة يستطيع Sweepy البحث فيها، مجمّعة تحت المحرك الذي يقرأها. تظهر اللوحات الـ63 كلها في مكان واحد بدلًا من الخمس المدمجة فقط.
+تسرد خطوة المنصات في معالج الملف الشخصي كل لوحة يستطيع Sweepy البحث فيها، مجمّعة تحت المحرك الذي يقرأها. تظهر اللوحات الـ63 كلها في مكان واحد بدلًا من 13 لوحة مدمجة فقط.
 
 | المجموعة | اللوحات | الوسم |
 |---|---|---|
 | `jobspy` (8) | LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, BDJobs | `built in` |
-| `ats` (5) | Greenhouse, Ashby, Lever, Workable, Built In NYC | `built in` |
+| `ats` (5) | Greenhouse, Ashby, Lever, Workable, BuiltinNYC | `built in` |
 | `hirehunt` (12) | LinkedIn, Indeed, Naukri, Shine, Internshala, Unstop, Google Careers, Amazon, Meta, Apple, Netflix, Microsoft | `needs download` حتى التثبيت |
 | `openroles` (4) | Greenhouse, Lever, Ashby, Workday | `needs download`، ويحتاج معرّفات شركات |
 | `jobdrop` (33) | Google, Wellfound, Workday, iCIMS, Dice, USAJobs, Handshake، والمزيد | `needs download`، ويتعارض مع JobSpy |
@@ -323,7 +327,7 @@ history:
 
 يقيس `match_pct` المؤهلات، لذا تبقى تفاصيل التوظيف خارجها. وتنتمي ساعات العمل الجزئي وحالة العقد والموقع إلى `concerns`. ولا يفقد الدور الذي يستطيعه المرشح نقاطًا إلا عندما لا تطابق المهارات أو الخبرة المتطلبات المعلنة في الإعلان. ويقيس الترتيب عندئذ الملاءمة لا الإتاحة.
 
-قيّم جانبي الحالة. يذكر `alignment` أبرز نقطة، أقوى دليل على ملاءمة المرشح. ويذكر `concerns` ما يعمل ضد المرشح، مثل مؤهل ناقص، أو فجوة في مدة العمل، أو ساعات جزئية، أو مدة عقد، أو موقع يستلزم الانتقال، أو أجر أقل من الحد الأدنى. ويطبع التقرير الزوجين في سطر واحد تحت صف المتطلبات، ويكتسب ملف CSV عمودًا باسم `concerns`. وتملأ جولة الكلمات المفتاحية وحدها `concerns` من كلمات الإعلان التي تفوت السيرة الذاتية.
+قيّم جانبي الحالة. يذكر `alignment` أبرز نقطة، أقوى دليل على ملاءمة المرشح. ويذكر `concerns` ما يعمل ضد المرشح. ومن الأمثلة على ذلك مؤهل ناقص، أو فجوة في مدة العمل، أو ساعات جزئية، أو مدة عقد، أو موقع يستلزم الانتقال، أو أجر أقل من الحد الأدنى. ويطبع التقرير الزوجين في سطر واحد تحت صف المتطلبات، ويكتسب ملف CSV عمودًا باسم `concerns`. وتملأ جولة الكلمات المفتاحية وحدها `concerns` من كلمات الإعلان التي تفوت السيرة الذاتية.
 
 تقبل `submit_judgments` أيضًا الوسيط `portfolio_highlight`. مرّر أعمال ملف الأعمال الخاصة بذلك الإعلان، فتطبعها البطاقة بوصفها **أبرز نقطة**. أما البطاقة التي لا تتلقى أبرز نقطة مُرسلة، فتسرد الأعمال التي وجدها Sweepy.
 
@@ -352,10 +356,10 @@ portfolio:
 
 تكشط الجولة الحية اللوحات لمدة دقيقة أو أكثر. ويشغّلها خادم MCP في الخلفية. ينتظر `run_sweep` 45 ثانية على الأكثر ثم يعيد `sweep_status: "running"` مع `job_id`. استعلم `get_sweep_status` دوريًا حتى يبلّغ `completed`. وتستمر الجولة إذا انقطع العميل. واضبط `SWEEPY_MCP_WAIT_SECONDS` لتقليل الانتظار في المضيفات ذات مهل الأدوات الأضيق.
 
-تستخدم الملفات الشخصية المنشأة عبر MCP المحركات المدمجة مع المحركات الاختيارية المثبّتة التي تجتاز
-فحوص إعداداتها الافتراضية. قدّم `sources_config` لاختيار المحركات
-صراحةً. يحتاج OpenRoles معرّفًا لكل شركة. ويحتاج Apify موافقة صريحة
-لأنه قد يترتب على ذلك رسوم.
+- تستخدم الملفات الشخصية المنشأة عبر MCP المحركات المدمجة مع المحركات الاختيارية المثبّتة التي تجتاز فحوص إعداداتها الافتراضية.
+- قدّم `sources_config` لاختيار المحركات صراحةً.
+- يحتاج OpenRoles معرّفًا لكل شركة.
+- ويحتاج Apify موافقة صريحة لأنه قد يترتب على ذلك رسوم.
 
 يستطيع المساعد التحقق من النتائج وملء الفجوات بأدوات البحث لديه. ينبغي أن يفحص المصادر والإعلانات المتخطاة مقابل صفحات التوظيف لدى أصحاب العمل. وينبغي أن يضيف ما تحقق من عناصر ناقصة وأن يوسم الإعلانات غير المتاحة بأنها غير مؤكدة. ويجب أن يعلن عندما لا يستطيع تأكيد التغطية الكاملة.
 
@@ -405,4 +409,4 @@ portfolio:
 
 ## <a name="license"></a>الترخيص
 
-يصدر Sweepy بموجب [رخصة MIT](LICENSE).
+يصدر Sweepy بموجب [رخصة MIT](../LICENSE).

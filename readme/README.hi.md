@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/pvega62/sweepy/actions"><img src="https://github.com/pvega62/sweepy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10 या उससे नया"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT लाइसेंस"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT लाइसेंस"></a>
   <a href="https://m8ven.ai/mcp/pvega62-sweepy-07ewva?s=readme"><img src="https://m8ven.ai/badge/mcp/pvega62-sweepy-07ewva?v=a2ea0bac35a4ed6e7512771f55ab2271" alt="M8ven स्कोर"></a>
 </p>
 
@@ -26,15 +26,19 @@
   <a href="https://github.com/pvega62/sweepy/issues/new">समस्या रिपोर्ट करें</a>
 </p>
 
+<p align="center">
+  <a href="../README.md">English</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <strong>हिन्दी</strong> · <a href="README.ja.md">日本語</a> · <a href="README.ar.md">العربية</a> · <a href="README.zh.md">简体中文</a>
+</p>
+
 ---
 
 Sweepy एक मुफ़्त टूल है जो जॉब बोर्ड खोजता है और हर पोस्टिंग को आपके रिज़्यूमे के सामने स्कोर करता है। यह कंपनियों की करियर साइट और जॉब बोर्ड पढ़ता है, डुप्लिकेट और एक्सपायर हुई लिस्टिंग हटाता है, फिर रैंक वाली रिपोर्ट लिखता है। प्रोफ़ाइल बदले बिना आप एक स्वीप के लिए डुप्लिकेट जाँच बंद कर सकते हैं। सेटअप विज़ार्ड एक लॉन्चपैड खोलता है: सर्च, प्रोफ़ाइल सेटअप, सर्च ट्यूनिंग, और Sweepy के Toolbox कार्य जैसे इंजन और एग्रीगेटर मैनेजमेंट।
 
-> मौजूदा वर्ज़न और रिलीज़ इतिहास के लिए **[CHANGELOG.md](CHANGELOG.md)** देखें।
+> मौजूदा वर्ज़न और रिलीज़ इतिहास के लिए **[CHANGELOG.md](../CHANGELOG.md)** देखें।
 
 ## <a name="features"></a>विशेषताएँ
 
-- **एक साथ कई जगह खोजता है।** Greenhouse, Ashby, Lever, Workable, Built In New York City, LinkedIn, Indeed, Glassdoor, और ZipRecruiter से पोस्टिंग जुटाता है। इनमें से हर सोर्स API key के बिना काम करता है।
+- **एक साथ कई जगह खोजता है।** Greenhouse, Ashby, Lever, Workable, Built In NYC, LinkedIn, Indeed, Glassdoor, और ZipRecruiter से पोस्टिंग जुटाता है। इनमें से हर सोर्स API key के बिना काम करता है।
 - **हर इंजन समानांतर चलाता है।** चालू इंजन एक साथ शुरू होते हैं। तब एक स्वीप सबसे धीमे इंजन जितना समय लेता है, उनके जोड़ जितना नहीं।
 - **बोर्ड फेल होने पर भी चलता रहता है।** हर इंजन को एक टाइमआउट और सर्किट ब्रेकर मिलता है। एक फेल होता एंडपॉइंट रन रोक नहीं सकता और न ही वही रिक्वेस्ट पाँच बार दोहराता है।
 - **ज़रूरत पर और इंजन जोड़ता है।** टर्मिनल छोड़े बिना विज़ार्ड से HireHunt, openroles, jobdrop, या Apify इंस्टॉल करें।
@@ -60,7 +64,7 @@ sweepy
 
 `pip install -e .` हर कोर डिपेंडेंसी इंस्टॉल करता है और आपके Python Scripts फ़ोल्डर में `sweepy` कमांड रजिस्टर करता है। एक बार टर्मिनल दोबारा खोलें ताकि आपका शेल उस फ़ोल्डर को PATH से उठा ले। विज़ार्ड शुरू करने के लिए `sweepy` चलाएँ, या कोई कमांड ऑप्शन जोड़ें जैसे `sweepy --run`। आप स्क्रिप्ट सीधे `python swee.py` से भी चला सकते हैं।
 
-वह एक कमांड आपको दो बिल्ट-इन इंजन देता है। ज़रूरत पड़ने पर विज़ार्ड चार ऑप्शनल इंजन पेश करता है, और आप कभी अलग requirements फ़ाइल नहीं चलाते।
+वह एक कमांड आपको दो बिल्ट-इन इंजन देता है। ज़रूरत पड़ने पर विज़ार्ड चार ऑप्शनल इंजन पेश करता है, और आपको कभी हाथ से दूसरी requirements फ़ाइल इंस्टॉल करने की ज़रूरत नहीं पड़ती।
 
 इसके बजाय हर संगत इंजन पहले से खींचने के लिए, उसी कमांड में एक फ़्लैग जोड़ें:
 
@@ -156,16 +160,16 @@ sweepy --convert path/to/resume.docx
 - **एक CSV फ़ाइल।** हर कार्ड फ़ील्ड, पूरा पोस्टिंग बॉडी, और आठ जॉब-ट्रैकिंग कॉलम जो Sweepy बाद के स्वीप में कॉपी करता है। इसे Excel, Google Sheets, या Notion में खोलें। छोटी फ़ाइलें चाहिए तो `export.description_chars` को धनात्मक संख्या पर सेट करें। कटी हुई बॉडी छोड़े गए अक्षरों की गिनती बताने वाले नोट पर खत्म होती है।
 - **एक JSON फ़ाइल।** वही डेटा ऐसे फ़ॉर्मैट में जिसे दूसरे टूल पढ़ सकें।
 
-[सैंपल PDF](docs/sample_report.pdf) खोलें, या [पेज 1 को इमेज के रूप में](docs/sample_report.png) देखें।
+[सैंपल PDF](../docs/sample_report.pdf) खोलें, या [पेज 1 को इमेज के रूप में](../docs/sample_report.png) देखें।
 
 ## <a name="job-engines"></a>जॉब इंजन
 
-Sweepy में दो इंजन शामिल हैं और चार और डाउनलोड कर सकता है। हर इंजन एक ही एडाप्टर के पीछे चलता है। प्रोफ़ाइल एक जैसी दिखती हैं, चाहे पोस्टिंग किसी भी इंजन ने खोजी हो।
+Sweepy में दो इंजन शामिल हैं और चार और डाउनलोड कर सकता है। `ats` इंजन applicant tracking system (ATS) को सीधे पढ़ता है। हर इंजन एक ही एडाप्टर के पीछे चलता है। प्रोफ़ाइल एक जैसी दिखती हैं, चाहे पोस्टिंग किसी भी इंजन ने खोजी हो।
 
 | इंजन | उपलब्धता | क्या स्क्रैप करता है | प्रॉक्सी | User-Agent | विवरण |
 |---|---|---|---|---|---|
 | `jobspy` | बिल्ट इन | LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, BDJobs | हाँ | हाँ | टॉगल |
-| `ats` | बिल्ट इन | Greenhouse, Ashby, Lever, Workable, Built In NYC | नहीं | नहीं | हमेशा |
+| `ats` | बिल्ट इन | Greenhouse, Ashby, Lever, Workable, BuiltinNYC | नहीं | नहीं | हमेशा |
 | `hirehunt` | डाउनलोड | LinkedIn, Indeed, Naukri, Shine, Internshala, Unstop, और छह कंपनी बोर्ड (Google Careers, Amazon, Meta, Apple, Netflix, Microsoft) | नहीं | नहीं | हमेशा |
 | `openroles` | डाउनलोड | Greenhouse, Lever, Ashby, आपके नामित Workday बोर्ड | नहीं | नहीं | हमेशा |
 | `jobdrop` | डाउनलोड | Google, Wellfound, Workday, iCIMS, Dice, USAJobs सहित 33 बोर्ड | हाँ | हाँ | टॉगल |
@@ -197,7 +201,7 @@ Windows पर Python 3.13 के साथ मापा गया:
 | `apify-client` | +14 MB | impit और more-itertools जोड़ता है |
 | `jobdrop` | +406 MB | scipy (134 MB), playwright (113 MB), tls-client (93 MB), और selenium (34 MB) की अगुवाई में |
 
-संगत इंजनों का पूरा इंस्टॉल लगभग **320 MB** लेता है। `jobdrop` जोड़ने से ब्राउज़र डाउनलोड होने से पहले कुल लगभग **725 MB** हो जाता है।
+संगत इंजनों का पूरा इंस्टॉल लगभग **310 MB** लेता है। `jobdrop` जोड़ने से ब्राउज़र डाउनलोड होने से पहले कुल लगभग **716 MB** हो जाता है।
 
 ब्राउज़र बाइनरी Python एनवायरनमेंट के बाहर रहते हैं और पहले इस्तेमाल पर आते हैं:
 
@@ -230,12 +234,12 @@ sweepy --setup --non-interactive --profile profiles/your_profile.yaml \
 
 ### <a name="choosing-boards"></a>बोर्ड चुनना
 
-प्रोफ़ाइल विज़ार्ड का प्लेटफ़ॉर्म स्टेप वे सभी बोर्ड दिखाता है जिन्हें Sweepy खोज सकता है, उन्हें पढ़ने वाले इंजन के नीचे समूहित करके। सभी 63 बोर्ड एक ही जगह दिखते हैं, सिर्फ बिल्ट-इन पाँच नहीं।
+प्रोफ़ाइल विज़ार्ड का प्लेटफ़ॉर्म स्टेप वे सभी बोर्ड दिखाता है जिन्हें Sweepy खोज सकता है, उन्हें पढ़ने वाले इंजन के नीचे समूहित करके। सभी 63 बोर्ड एक ही जगह दिखते हैं, केवल 13 बिल्ट-इन बोर्ड नहीं।
 
 | समूह | बोर्ड | टैग |
 |---|---|---|
 | `jobspy` (8) | LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, BDJobs | `built in` |
-| `ats` (5) | Greenhouse, Ashby, Lever, Workable, Built In NYC | `built in` |
+| `ats` (5) | Greenhouse, Ashby, Lever, Workable, BuiltinNYC | `built in` |
 | `hirehunt` (12) | LinkedIn, Indeed, Naukri, Shine, Internshala, Unstop, Google Careers, Amazon, Meta, Apple, Netflix, Microsoft | `needs download` जब तक इंस्टॉल न हो |
 | `openroles` (4) | Greenhouse, Lever, Ashby, Workday | `needs download`, और कंपनी slugs चाहिए |
 | `jobdrop` (33) | Google, Wellfound, Workday, iCIMS, Dice, USAJobs, Handshake, और अन्य | `needs download`, और JobSpy से कॉन्फ़्लिक्ट |
@@ -323,7 +327,7 @@ Sweepy पोस्टिंग को साझा शब्दावली स
 
 `match_pct` योग्यता मापता है, इसलिए रोज़गार की लॉजिस्टिक्स उससे बाहर रहती हैं। पार्ट-टाइम घंटे, कॉन्ट्रैक्ट स्थिति, और लोकेशन `concerns` में जाते हैं। जो भूमिका उम्मीदवार कर सकता है उसके अंक सिर्फ तब घटते हैं जब स्किल्स या अनुभव पोस्टिंग की बताई ज़रूरतों से मेल न खाएँ। तब रैंकिंग उपलब्धता के बजाय फ़िट मापती है।
 
-मामले के दोनों पक्ष देखें। `alignment` मुख्य बात बताता है, वह सबसे मज़बूत सबूत कि उम्मीदवार फ़िट है। `concerns` बताता है कि उम्मीदवार के ख़िलाफ़ क्या है, जैसे छूटी योग्यता, टेन्योर का अंतर, पार्ट-टाइम घंटे, कॉन्ट्रैक्ट अवधि, ऐसी लोकेशन जिसके लिए शिफ्ट करना पड़े, या फ़्लोर से नीचे पे। रिपोर्ट यह जोड़ी ज़रूरतों वाली पंक्ति के नीचे एक लाइन में प्रिंट करती है, और CSV में `concerns` कॉलम जुड़ता है। सिर्फ keyword वाला रन `concerns` उन पोस्टिंग keywords से भरता है जो रिज़्यूमे में नहीं मिलते।
+मामले के दोनों पक्ष देखें। `alignment` मुख्य बात बताता है, यानी सबसे मज़बूत सबूत कि उम्मीदवार फ़िट है। `concerns` बताता है कि उम्मीदवार के ख़िलाफ़ क्या है। उदाहरण के लिए, छूटी योग्यता, टेन्योर का अंतर, पार्ट-टाइम घंटे, कॉन्ट्रैक्ट अवधि, ऐसी लोकेशन जिसके लिए शिफ्ट करना पड़े, या फ़्लोर से नीचे पे। रिपोर्ट यह जोड़ी ज़रूरतों वाली पंक्ति के नीचे एक लाइन में प्रिंट करती है, और CSV में `concerns` कॉलम जुड़ता है। सिर्फ keyword वाला रन `concerns` उन पोस्टिंग keywords से भरता है जो रिज़्यूमे में नहीं मिलते।
 
 `submit_judgments` `portfolio_highlight` भी लेता है। उस पोस्टिंग के पोर्टफ़ोलियो पीस दें, और कार्ड उन्हें **Highlight** के रूप में प्रिंट करता है। जिस कार्ड में कोई भेजा हुआ highlight नहीं है वह Sweepy के खोजे पीस दिखाता है।
 
@@ -352,10 +356,10 @@ Sweepy ऑनलाइन पोर्टफ़ोलियो की हेड�
 
 लाइव स्वीप बोर्ड एक मिनट या ज़्यादा स्क्रैप करता है। MCP सर्वर इसे बैकग्राउंड में चलाता है। `run_sweep` ज़्यादा से ज़्यादा 45 सेकंड रुकता है और फिर `sweep_status: "running"` के साथ `job_id` लौटाता है। जब तक `get_sweep_status` `completed` न बताए, पोल करें। क्लाइंट डिस्कनेक्ट होने पर भी स्वीप चलता रहता है। कम टूल टाइमआउट वाले होस्ट के लिए इंतज़ार घटाने हेतु `SWEEPY_MCP_WAIT_SECONDS` सेट करें।
 
-MCP से बनी प्रोफ़ाइल बिल्ट-इन इंजन और वे इंस्टॉल किए ऑप्शनल इंजन इस्तेमाल करती हैं जो
-अपने डिफ़ॉल्ट कॉन्फ़िगरेशन चेक पास करते हैं। इंजन स्पष्ट रूप से चुनने के लिए `sources_config` दें।
-OpenRoles को हर कंपनी के लिए एक slug चाहिए। Apify को स्पष्ट opt-in चाहिए क्योंकि
-इससे शुल्क लग सकता है।
+- MCP से बनी प्रोफ़ाइल बिल्ट-इन इंजन और वे इंस्टॉल किए गए ऑप्शनल इंजन इस्तेमाल करती हैं जो अपने डिफ़ॉल्ट कॉन्फ़िगरेशन चेक पास करते हैं।
+- इंजन स्पष्ट रूप से चुनने के लिए `sources_config` दें।
+- OpenRoles को हर कंपनी के लिए एक slug चाहिए।
+- Apify को स्पष्ट opt-in चाहिए क्योंकि इससे शुल्क लग सकता है।
 
 असिस्टेंट अपने सर्च टूल से नतीजे जाँच सकता है और कमियाँ भर सकता है। उसे छोड़े गए सोर्स और पोस्टिंग नियोक्ता के करियर पेजों के सामने जाँचने चाहिए। उसे सत्यापित छूटें जोड़नी चाहिए और जिन लिस्टिंग तक पहुँच नहीं है उन्हें unverified लेबल करना चाहिए। जब वह पूरी कवरेज पक्की न कर सके तो उसे यह बताना चाहिए।
 
@@ -405,4 +409,4 @@ Sweepy सार्वजनिक जॉब बोर्ड और जॉब-�
 
 ## <a name="license"></a>लाइसेंस
 
-Sweepy [MIT License](LICENSE) के तहत रिलीज़ होता है।
+Sweepy [MIT License](../LICENSE) के तहत रिलीज़ होता है।

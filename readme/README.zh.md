@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/pvega62/sweepy/actions"><img src="https://github.com/pvega62/sweepy/actions/workflows/ci.yml/badge.svg" alt="持续集成"></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10 或更新版本"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT 许可证"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT 许可证"></a>
   <a href="https://m8ven.ai/mcp/pvega62-sweepy-07ewva?s=readme"><img src="https://m8ven.ai/badge/mcp/pvega62-sweepy-07ewva?v=a2ea0bac35a4ed6e7512771f55ab2271" alt="M8ven 评分"></a>
 </p>
 
@@ -26,15 +26,19 @@
   <a href="https://github.com/pvega62/sweepy/issues/new">报告问题</a>
 </p>
 
+<p align="center">
+  <a href="../README.md">English</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.hi.md">हिन्दी</a> · <a href="README.ja.md">日本語</a> · <a href="README.ar.md">العربية</a> · <strong>简体中文</strong>
+</p>
+
 ---
 
 Sweepy 是一款免费工具，它搜索职位板，并按你的简历为每条职位评分。它读取公司招聘网站和职位板，丢弃重复与失效的职位，然后写出排序报告。你可以只对一次搜索关闭重复检查，而不改动配置。设置向导会打开一个启动台，用于搜索、创建配置、调优搜索，以及执行 Sweepy's Toolbox 中的引擎与聚合器管理等任务。
 
-> 当前版本与发布历史见 **[CHANGELOG.md](CHANGELOG.md)**。
+> 当前版本与发布历史见 **[CHANGELOG.md](../CHANGELOG.md)**。
 
 ## <a name="features"></a>功能
 
-- **一次搜索多处来源。** 从 Greenhouse、Ashby、Lever、Workable、Built In New York City、LinkedIn、Indeed、Glassdoor 和 ZipRecruiter 收集职位。这些来源都无需 API key。
+- **一次搜索多处来源。** 从 Greenhouse、Ashby、Lever、Workable、Built In NYC、LinkedIn、Indeed、Glassdoor 和 ZipRecruiter 收集职位。这些来源都无需 API key。
 - **所有引擎并行运行。** 已启用的引擎同时启动。因此一次搜索的耗时接近最慢的那个引擎，而不是它们之和。
 - **某个职位板失败时继续运行。** 每个引擎都有超时和熔断器。一个端点失败不会拖住整轮运行，也不会把同一个请求重复五次。
 - **按需增加引擎。** 在向导中安装 HireHunt、openroles、jobdrop 或 Apify，无需离开终端。
@@ -60,7 +64,7 @@ sweepy
 
 `pip install -e .` 会安装全部核心依赖，并把 `sweepy` 命令注册到你的 Python Scripts 文件夹。重新打开一次终端，让你的 shell 从 PATH 读取该文件夹。运行 `sweepy` 启动向导，或加上命令选项，例如 `sweepy --run`。你也可以直接用 `python swee.py` 运行脚本。
 
-这一条命令就给你两个内置引擎。需要时，向导会提供四个可选引擎，你不需要运行单独的 requirements 文件。
+这一条命令就给你两个内置引擎。需要时，向导会提供四个可选引擎，你永远不需要手动安装另一个 requirements 文件。
 
 如果想改为一次拉取所有兼容引擎，在同一条命令上加一个标志：
 
@@ -156,16 +160,16 @@ sweepy --convert path/to/resume.docx
 - **一个 CSV 文件。** 包含每张卡片的字段、完整的职位正文，以及八列职位跟踪数据，Sweepy 会把这些数据复制到后续搜索中。可用 Excel、Google Sheets 或 Notion 打开它。若想要更小的文件，把 `export.description_chars` 设为正数。被截断的正文末尾会注明省略的字符数。
 - **一个 JSON 文件。** 同样的数据，采用其他工具可读取的格式。
 
-打开[示例 PDF](docs/sample_report.pdf)，或查看[第 1 页的图片](docs/sample_report.png)。
+打开[示例 PDF](../docs/sample_report.pdf)，或查看[第 1 页的图片](../docs/sample_report.png)。
 
 ## <a name="job-engines"></a>职位引擎
 
-Sweepy 内置两个引擎，还可再下载四个。所有引擎都在同一个适配器背后运行。无论哪个引擎找到职位，配置写法都相同。
+Sweepy 内置两个引擎，还可再下载四个。`ats` 引擎直接读取申请人跟踪系统（ATS）。所有引擎都在同一个适配器背后运行。无论哪个引擎找到职位，配置写法都相同。
 
 | 引擎 | 可用性 | 抓取内容 | 代理 | User-Agent | 描述 |
 |---|---|---|---|---|---|
 | `jobspy` | 内置 | LinkedIn、Indeed、Glassdoor、ZipRecruiter、Google Jobs、Bayt、Naukri、BDJobs | 支持 | 支持 | 可切换 |
-| `ats` | 内置 | Greenhouse、Ashby、Lever、Workable、Built In NYC | 不支持 | 不支持 | 始终 |
+| `ats` | 内置 | Greenhouse、Ashby、Lever、Workable、BuiltinNYC | 不支持 | 不支持 | 始终 |
 | `hirehunt` | 可下载 | LinkedIn、Indeed、Naukri、Shine、Internshala、Unstop，以及六个公司职位板（Google Careers、Amazon、Meta、Apple、Netflix、Microsoft） | 不支持 | 不支持 | 始终 |
 | `openroles` | 可下载 | 你指定的 Greenhouse、Lever、Ashby、Workday 职位板 | 不支持 | 不支持 | 始终 |
 | `jobdrop` | 可下载 | 33 个职位板，包括 Google、Wellfound、Workday、iCIMS、Dice、USAJobs | 支持 | 支持 | 可切换 |
@@ -197,7 +201,7 @@ sweepy --install-engines jobdrop --allow-engine-conflicts
 | `apify-client` | +14 MB | 增加 impit 和 more-itertools |
 | `jobdrop` | +406 MB | 主要是 scipy（134 MB）、playwright（113 MB）、tls-client（93 MB）和 selenium（34 MB） |
 
-完整安装所有兼容引擎约占 **320 MB**。再加上 `jobdrop`，在它下载浏览器之前总量约为 **725 MB**。
+完整安装所有兼容引擎约占 **310 MB**。再加上 `jobdrop`，在它下载浏览器之前总量约为 **716 MB**。
 
 浏览器二进制文件位于 Python 环境之外，首次使用时才下载：
 
@@ -230,12 +234,12 @@ sweepy --setup --non-interactive --profile profiles/your_profile.yaml \
 
 ### <a name="choosing-boards"></a>选择职位板
 
-配置向导的平台步骤列出 Sweepy 能搜索的所有职位板，并按读取它的引擎分组。全部 63 个职位板出现在同一处，而不只是内置的五个。
+配置向导的平台步骤列出 Sweepy 能搜索的所有职位板，并按读取它的引擎分组。全部 63 个职位板出现在同一处，而不只是内置的 13 个职位板。
 
 | 分组 | 职位板 | 标记 |
 |---|---|---|
 | `jobspy`（8） | LinkedIn、Indeed、Glassdoor、ZipRecruiter、Google Jobs、Bayt、Naukri、BDJobs | `built in` |
-| `ats`（5） | Greenhouse、Ashby、Lever、Workable、Built In NYC | `built in` |
+| `ats`（5） | Greenhouse、Ashby、Lever、Workable、BuiltinNYC | `built in` |
 | `hirehunt`（12） | LinkedIn、Indeed、Naukri、Shine、Internshala、Unstop、Google Careers、Amazon、Meta、Apple、Netflix、Microsoft | 安装前为 `needs download` |
 | `openroles`（4） | Greenhouse、Lever、Ashby、Workday | `needs download`，且需要公司 slug |
 | `jobdrop`（33） | Google、Wellfound、Workday、iCIMS、Dice、USAJobs、Handshake 等 | `needs download`，且与 JobSpy 冲突 |
@@ -323,7 +327,7 @@ Sweepy 按共同词汇给职位评分，这种评分不调用模型，也不使�
 
 `match_pct` 衡量任职资格，因此用工安排不计入其中。兼职工时、合同性质和地点属于 `concerns`。候选人能胜任的角色，只有在技能或经验与职位明示要求不符时才会失分。这样排序衡量的是契合度，而不是可到岗性。
 
-两面都要评估。`alignment` 陈述亮点，即候选人契合的最强证据。`concerns` 陈述对候选人不利的因素，例如缺少某项资格、任职年限的空白、兼职工时、合同期限、需要搬迁的地点，或低于底线的薪酬。报告在要求那一行下方用一行打印这一对内容，CSV 会增加 `concerns` 列。仅关键词的运行会用简历缺少的职位关键词填充 `concerns`。
+两面都要评估。`alignment` 陈述亮点，即候选人契合的最强证据。`concerns` 陈述对候选人不利的因素。例如缺少某项资格、任职年限的空白、兼职工作时间、合同期限、需要搬迁的地点，或低于底线的薪酬。报告在要求那一行下方用一行打印这一对内容，CSV 会增加 `concerns` 列。仅关键词的运行会用简历缺少的职位关键词填充 `concerns`。
 
 `submit_judgments` 还接受 `portfolio_highlight`。传入该职位对应的作品集作品，卡片会把它们作为 **Highlight** 打印。没有提交亮点的卡片会列出 Sweepy 找到的作品。
 
@@ -352,10 +356,10 @@ Sweepy 抓取在线作品集以读取其标题和链接。当页面阻止请求�
 
 一次实时搜索会抓取职位板一分钟或更久。MCP 服务器在后台运行它。`run_sweep` 最多等待 45 秒，然后返回 `sweep_status: "running"` 和一个 `job_id`。轮询 `get_sweep_status`，直到它报告 `completed`。即使客户端断开，搜索也会继续运行。对于工具超时更紧的宿主，设置 `SWEEPY_MCP_WAIT_SECONDS` 可降低等待时间。
 
-MCP 创建的配置使用内置引擎，加上已安装且通过
-默认配置检查的可选引擎。提供 `sources_config` 可明确选择
-引擎。OpenRoles 需要每家公司的 slug。Apify 需要明确启用，
-因为它可能产生费用。
+- MCP 创建的配置使用内置引擎，加上已安装且通过默认配置检查的可选引擎。
+- 提供 `sources_config` 可明确选择引擎。
+- OpenRoles 需要每家公司的 slug。
+- Apify 需要明确启用，因为它可能产生费用。
 
 助手可以用它的搜索工具核验结果并填补缺口。它应把跳过的来源和职位与雇主的招聘页面对照检查。它应补充经核验的遗漏项，并把无法访问的职位标为未核验。当无法确认覆盖完整时，它必须说明这一点。
 
@@ -405,4 +409,4 @@ Sweepy 抓取公开职位板和职位板 API。抓取可能违反某些平台的
 
 ## <a name="license"></a>许可证
 
-Sweepy 以 [MIT 许可证](LICENSE) 发布。
+Sweepy 以 [MIT 许可证](../LICENSE) 发布。

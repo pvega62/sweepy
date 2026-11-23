@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/pvega62/sweepy/actions"><img src="https://github.com/pvega62/sweepy/actions/workflows/ci.yml/badge.svg" alt="CI（継続的インテグレーション）"></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10 以降"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT ライセンス"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT ライセンス"></a>
   <a href="https://m8ven.ai/mcp/pvega62-sweepy-07ewva?s=readme"><img src="https://m8ven.ai/badge/mcp/pvega62-sweepy-07ewva?v=a2ea0bac35a4ed6e7512771f55ab2271" alt="M8ven スコア"></a>
 </p>
 
@@ -26,15 +26,19 @@
   <a href="https://github.com/pvega62/sweepy/issues/new">問題を報告する</a>
 </p>
 
+<p align="center">
+  <a href="../README.md">English</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.hi.md">हिन्दी</a> · <strong>日本語</strong> · <a href="README.ar.md">العربية</a> · <a href="README.zh.md">简体中文</a>
+</p>
+
 ---
 
 Sweepy は無料のツールで、求人ボードを検索し、各求人をあなたの履歴書と照合してスコアを付けます。企業の採用サイトと求人ボードを読み取り、重複した求人と期限切れの求人を除外してから、ランキング付きのレポートを書き出します。プロファイルを変更せずに、1 回のスイープだけで重複チェックをオフにできます。セットアップウィザードは、検索、プロファイル設定、検索の調整、エンジンやアグリゲーターの管理といった Sweepy のツールボックスのタスクのためのランチパッドを開きます。
 
-> 現在のバージョンとリリース履歴は **[CHANGELOG.md](CHANGELOG.md)** を参照してください。
+> 現在のバージョンとリリース履歴は **[CHANGELOG.md](../CHANGELOG.md)** を参照してください。
 
 ## <a name="features"></a>機能
 
-- **多くの場所を一度に検索します。** Greenhouse、Ashby、Lever、Workable、Built In New York City、LinkedIn、Indeed、Glassdoor、ZipRecruiter から求人を収集します。これらのソースはすべて API キーなしで動作します。
+- **多くの場所を一度に検索します。** Greenhouse、Ashby、Lever、Workable、Built In NYC、LinkedIn、Indeed、Glassdoor、ZipRecruiter から求人を収集します。これらのソースはすべて API キーなしで動作します。
 - **すべてのエンジンを並列で実行します。** 有効なエンジンは同時に起動します。そのため、スイープにかかる時間は各エンジンの合計ではなく、最も遅いエンジンとほぼ同じになります。
 - **ボードが失敗しても処理を続けます。** 各エンジンにはタイムアウトとサーキットブレーカーがあります。1 つのエンドポイントが失敗しても、実行が止まったり、同じリクエストが 5 回繰り返されたりすることはありません。
 - **必要に応じてエンジンを追加します。** ターミナルを離れずに、ウィザードから HireHunt、openroles、jobdrop、Apify をインストールできます。
@@ -60,7 +64,7 @@ sweepy
 
 `pip install -e .` はコアの依存関係をすべてインストールし、Python の Scripts フォルダーに `sweepy` コマンドを登録します。シェルが PATH からそのフォルダーを読み込むように、ターミナルを一度開き直します。ウィザードを開始するには `sweepy` を実行するか、`sweepy --run` のようなコマンドオプションを追加します。`python swee.py` でスクリプトを直接実行することもできます。
 
-この 1 つのコマンドで、2 つの組み込みエンジンが使えます。ウィザードは必要に応じて 4 つのオプションエンジンを提示するので、別の requirements ファイルを実行する必要はありません。
+この 1 つのコマンドで、2 つの組み込みエンジンが使えます。ウィザードは必要に応じて 4 つのオプションエンジンを提示するので、別の requirements ファイルを手動でインストールする必要はありません。
 
 代わりに互換性のあるすべてのエンジンを最初から取得するには、同じコマンドにフラグを 1 つ追加します。
 
@@ -156,16 +160,16 @@ sweepy --convert path/to/resume.docx
 - **CSV ファイル。** すべてのカードフィールド、求人本文の全体、Sweepy が以降のスイープに引き継ぐ 8 つの応募トラッキング列を含みます。Excel、Google Sheets、Notion で開けます。ファイルを小さくしたい場合は、`export.description_chars` に正の数を設定します。切り詰めた本文は、省略した文字数を示す注記で終わります。
 - **JSON ファイル。** 他のツールが読める形式の同じデータです。
 
-[サンプル PDF](docs/sample_report.pdf) を開くか、[1 ページ目の画像](docs/sample_report.png) を表示してください。
+[サンプル PDF](../docs/sample_report.pdf) を開くか、[1 ページ目の画像](../docs/sample_report.png) を表示してください。
 
 ## <a name="job-engines"></a>求人エンジン
 
-Sweepy には 2 つのエンジンが含まれ、さらに 4 つをダウンロードできます。すべてのエンジンは同じアダプターの背後で動作します。どのエンジンが求人を見つけたかに関係なく、プロファイルは同じように扱えます。
+Sweepy には 2 つのエンジンが含まれ、さらに 4 つをダウンロードできます。`ats` エンジンは応募者追跡システム（ATS）を直接読み取ります。すべてのエンジンは同じアダプターの背後で動作します。どのエンジンが求人を見つけたかに関係なく、プロファイルは同じように扱えます。
 
 | エンジン | 利用方法 | 取得する内容 | プロキシ | User-Agent | 説明文 |
 |---|---|---|---|---|---|
 | `jobspy` | 組み込み | LinkedIn、Indeed、Glassdoor、ZipRecruiter、Google Jobs、Bayt、Naukri、BDJobs | あり | あり | 切り替え |
-| `ats` | 組み込み | Greenhouse、Ashby、Lever、Workable、Built In NYC | なし | なし | 常に |
+| `ats` | 組み込み | Greenhouse、Ashby、Lever、Workable、BuiltinNYC | なし | なし | 常に |
 | `hirehunt` | ダウンロード | LinkedIn、Indeed、Naukri、Shine、Internshala、Unstop、および 6 つの企業ボード（Google Careers、Amazon、Meta、Apple、Netflix、Microsoft） | なし | なし | 常に |
 | `openroles` | ダウンロード | 名前を指定した Greenhouse、Lever、Ashby、Workday のボード | なし | なし | 常に |
 | `jobdrop` | ダウンロード | Google、Wellfound、Workday、iCIMS、Dice、USAJobs を含む 33 のボード | あり | あり | 切り替え |
@@ -197,7 +201,7 @@ Windows の Python 3.13 で計測した値は次のとおりです。
 | `apify-client` | +14 MB | impit と more-itertools を追加 |
 | `jobdrop` | +406 MB | scipy（134 MB）、playwright（113 MB）、tls-client（93 MB）、selenium（34 MB）が中心 |
 
-互換エンジンをすべてインストールすると約 **320 MB** になります。`jobdrop` を追加すると、ブラウザーをダウンロードする前の時点で合計約 **725 MB** になります。
+互換エンジンをすべてインストールすると約 **310 MB** になります。`jobdrop` を追加すると、ブラウザーをダウンロードする前の時点で合計約 **716 MB** になります。
 
 ブラウザーのバイナリは Python 環境の外に置かれ、初回使用時に取得されます。
 
@@ -230,12 +234,12 @@ sweepy --setup --non-interactive --profile profiles/your_profile.yaml \
 
 ### <a name="choosing-boards"></a>ボードの選択
 
-プロファイルウィザードのプラットフォーム手順には、Sweepy が検索できるすべてのボードが、それを読み取るエンジンごとにまとめて表示されます。63 のボードが、組み込みの 5 つだけでなく 1 か所に表示されます。
+プロファイルウィザードのプラットフォーム手順には、Sweepy が検索できるすべてのボードが、それを読み取るエンジンごとにまとめて表示されます。63 のボードがすべて 1 か所に表示され、組み込みの 13 ボードだけではありません。
 
 | グループ | ボード | タグ |
 |---|---|---|
 | `jobspy`（8） | LinkedIn、Indeed、Glassdoor、ZipRecruiter、Google Jobs、Bayt、Naukri、BDJobs | `built in` |
-| `ats`（5） | Greenhouse、Ashby、Lever、Workable、Built In NYC | `built in` |
+| `ats`（5） | Greenhouse、Ashby、Lever、Workable、BuiltinNYC | `built in` |
 | `hirehunt`（12） | LinkedIn、Indeed、Naukri、Shine、Internshala、Unstop、Google Careers、Amazon、Meta、Apple、Netflix、Microsoft | インストールまで `needs download` |
 | `openroles`（4） | Greenhouse、Lever、Ashby、Workday | `needs download`、および企業スラッグが必要 |
 | `jobdrop`（33） | Google、Wellfound、Workday、iCIMS、Dice、USAJobs、Handshake など | `needs download`、および JobSpy と競合 |
@@ -352,10 +356,10 @@ Sweepy は見出しとリンクを読むためにオンラインのポートフ�
 
 実際のスイープはボードを 1 分以上スクレイピングします。MCP サーバーはそれをバックグラウンドで実行します。`run_sweep` は最大 45 秒待ち、その後 `sweep_status: "running"` を `job_id` とともに返します。`get_sweep_status` を、`completed` を報告するまでポーリングします。クライアントが切断してもスイープは実行を続けます。ツールのタイムアウトが厳しいホストでは、`SWEEPY_MCP_WAIT_SECONDS` を設定して待機時間を短くします。
 
-MCP で作成したプロファイルは、組み込みエンジンに加えて、デフォルトの設定チェックに
-合格したインストール済みのオプションエンジンを使用します。エンジンを明示的に選ぶには `sources_config` を
-指定します。OpenRoles は企業ごとにスラッグが必要です。Apify は課金が
-発生する可能性があるため、明示的なオプトインが必要です。
+- MCP で作成したプロファイルは、組み込みエンジンに加えて、デフォルトの設定チェックに合格したインストール済みのオプションエンジンを使用します。
+- エンジンを明示的に選ぶには `sources_config` を指定します。
+- OpenRoles は企業ごとにスラッグが必要です。
+- Apify は課金が発生する可能性があるため、明示的なオプトインが必要です。
 
 アシスタントは検索ツールで結果を検証し、不足を補えます。スキップされたソースと求人を企業の採用ページと照合します。検証済みの抜けを追加し、アクセスできない掲載は未検証として示します。完全な網羅を確認できない場合は、その旨を明らかにします。
 
@@ -405,4 +409,4 @@ Sweepy は公開されている求人ボードと求人ボードの API をス�
 
 ## <a name="license"></a>ライセンス
 
-Sweepy は [MIT License](LICENSE) の下でリリースされています。
+Sweepy は [MIT License](../LICENSE) の下でリリースされています。
